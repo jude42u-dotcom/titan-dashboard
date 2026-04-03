@@ -1,90 +1,106 @@
 import pandas as pd
 import random
 
+# -------------------------
+# MOCK DATA (STABLE — NO ERRORS)
+# -------------------------
 def get_mock_data():
-    # Generate stable fake market data (no API dependency)
     data = []
     price = 1.0800
 
-    for i in range(10):
-        change = random.uniform(-0.002, 0.002)
+    for i in range(20):
         open_price = price
-        close_price = price + change
-        high = max(open_price, close_price) + random.uniform(0, 0.001)
-        low = min(open_price, close_price) - random.uniform(0, 0.001)
+        high = open_price + random.uniform(0.0005, 0.0020)
+        low = open_price - random.uniform(0.0005, 0.0020)
+        close = random.uniform(low, high)
 
         data.append({
             "open": open_price,
             "high": high,
             "low": low,
-            "close": close_price
+            "close": close
         })
 
-        price = close_price
+        price = close
 
     return pd.DataFrame(data)
 
-
-def calculate_structure(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    if last["high"] > prev["high"] and last["low"] > prev["low"]:
-        return "UPTREND"
-    elif last["high"] < prev["high"] and last["low"] < prev["low"]:
-        return "DOWNTREND"
-    else:
-        return "RANGE"
-
-
-def calculate_momentum(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    return "BUY" if last["close"] > prev["close"] else "SELL"
-
-
-def calculate_volatility(df):
-    last = df.iloc[-1]
-    return last["high"] - last["low"]
-
-
-def calculate_score(structure, momentum, volatility):
-    score = 0
-
-    if structure == "UPTREND" and momentum == "BUY":
-        score += 40
-    elif structure == "DOWNTREND" and momentum == "SELL":
-        score += 40
-
-    if volatility > 0.001:
-        score += 30
-    else:
-        score += 10
-
-    if structure != "RANGE":
-        score += 30
-
-    return min(score, 100)
-
-
+# -------------------------
+# TITAN ENGINE V2
+# -------------------------
 def calculate_titan(pair):
     df = get_mock_data()
 
-    structure = calculate_structure(df)
-    momentum = calculate_momentum(df)
-    volatility = calculate_volatility(df)
-    score = calculate_score(structure, momentum, volatility)
-
     last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    # STRUCTURE
+    if last["high"] > prev["high"] and last["low"] > prev["low"]:
+        structure = "UPTREND"
+    elif last["high"] < prev["high"] and last["low"] < prev["low"]:
+        structure = "DOWNTREND"
+    else:
+        structure = "RANGE"
+
+    # ASIA RANGE (first 5 candles)
+    asia_high = df["high"].iloc[:5].max()
+    asia_low = df["low"].iloc[:5].min()
+
+    # FIRST EXTREME
+    if last["close"] > asia_high:
+        first_extreme = "HIGH TAKEN"
+        bias = "BUY"
+    elif last["close"] < asia_low:
+        first_extreme = "LOW TAKEN"
+        bias = "SELL"
+    else:
+        first_extreme = "INSIDE RANGE"
+        bias = "NEUTRAL"
+
+    # REGIME
+    regime = "ACTIVE" if bias != "NEUTRAL" else "WAIT"
+
+    # VOLATILITY
+    range_size = last["high"] - last["low"]
+
+    # SCORE
+    score = 0
+    if structure != "RANGE":
+        score += 30
+    if bias != "NEUTRAL":
+        score += 40
+    if range_size > 0.001:
+        score += 30
+
+    score = min(score, 100)
+
+    # ZONES
+    buy_zone = round(asia_low, 5)
+    sell_zone = round(asia_high, 5)
+
+    # TARGETS (EXPANSION)
+    expansion = asia_high - asia_low
+
+    if bias == "BUY":
+        t1 = asia_high + expansion * 0.5
+        t2 = asia_high + expansion * 1.0
+        t3 = asia_high + expansion * 1.5
+    elif bias == "SELL":
+        t1 = asia_low - expansion * 0.5
+        t2 = asia_low - expansion * 1.0
+        t3 = asia_low - expansion * 1.5
+    else:
+        t1 = t2 = t3 = last["close"]
 
     return {
         "structure": structure,
-        "bias": momentum,
-        "regime": "ACTIVE" if score >= 60 else "WEAK",
+        "bias": bias,
+        "regime": regime,
+        "first_extreme": first_extreme,
         "score": score,
-        "buy_zone": round(last["low"], 5),
-        "sell_zone": round(last["high"], 5),
-        "t1": round(last["close"] * 0.999, 5),
-        "t2": round(last["close"] * 1.001, 5),
-        "t3": round(last["close"] * 1.002, 5),
+        "buy_zone": round(buy_zone, 5),
+        "sell_zone": round(sell_zone, 5),
+        "t1": round(t1, 5),
+        "t2": round(t2, 5),
+        "t3": round(t3, 5),
     }
