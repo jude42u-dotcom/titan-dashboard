@@ -4,13 +4,18 @@ import yfinance as yf
 from datetime import datetime
 
 # ==============================
-# DATA FETCH (STABLE)
+# DATA FETCH (ROBUST)
 # ==============================
 def get_ohlc(symbol):
     try:
-        df = yf.download(symbol, period="5d", interval="1h")
+        df = yf.download(symbol, period="5d", interval="1h", progress=False)
 
         if df is None or df.empty:
+            return None
+
+        df = df.dropna()
+
+        if df.empty:
             return None
 
         return df
@@ -20,31 +25,48 @@ def get_ohlc(symbol):
 
 
 # ==============================
-# STRUCTURE ENGINE (HF / LF)
+# STRUCTURE ENGINE (SAFE)
 # ==============================
 def detect_structure(df):
-    highs = df["High"].tail(5).values
-    lows = df["Low"].tail(5).values
+    try:
+        if df is None or len(df) < 3:
+            return "RANGE"
 
-    if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
-        return "HFL"   # Higher High / Higher Low
+        highs = df["High"].astype(float).tail(3).values
+        lows = df["Low"].astype(float).tail(3).values
 
-    elif highs[-1] < highs[-2] and lows[-1] < lows[-2]:
-        return "LFHL"  # Lower High / Lower Low
+        if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
+            return "HFL"
 
-    else:
+        elif highs[-1] < highs[-2] and lows[-1] < lows[-2]:
+            return "LFHL"
+
+        else:
+            return "RANGE"
+
+    except:
         return "RANGE"
 
 
 # ==============================
-# REGIME ENGINE
+# REGIME ENGINE (SAFE)
 # ==============================
 def detect_regime(df):
-    rng = df["High"].max() - df["Low"].min()
+    try:
+        if df is None or df.empty:
+            return "COMPRESSION"
 
-    if rng > 0.010:
-        return "EXPANSION"
-    else:
+        high = float(df["High"].max())
+        low = float(df["Low"].min())
+
+        rng = high - low
+
+        if rng > 0.010:
+            return "EXPANSION"
+        else:
+            return "COMPRESSION"
+
+    except:
         return "COMPRESSION"
 
 
@@ -66,40 +88,54 @@ def compute_score(structure, regime):
 
 
 # ==============================
-# TRSE ENGINE (DAY + DELAY)
+# TRSE ENGINE (SAFE)
 # ==============================
 def compute_trse(df):
-    closes = df["Close"].tail(4).values
+    try:
+        if df is None or len(df) < 4:
+            return "Trend Day 0", 0
 
-    if len(closes) < 4:
+        closes = df["Close"].astype(float).tail(4).values
+
+        if closes[-1] > closes[-2] > closes[-3]:
+            return "Trend Day 2", 2
+
+        elif closes[-1] < closes[-2] < closes[-3]:
+            return "Trend Day 2", 2
+
+        else:
+            return "Rotation Day", 1
+
+    except:
         return "Trend Day 0", 0
 
-    if closes[-1] > closes[-2] > closes[-3]:
-        return "Trend Day 2", 2
-
-    elif closes[-1] < closes[-2] < closes[-3]:
-        return "Trend Day 2", 2
-
-    else:
-        return "Rotation Day", 1
-
 
 # ==============================
-# ZONES + TARGETS
+# LEVELS ENGINE (SAFE)
 # ==============================
 def compute_levels(df):
-    high = df["High"].max()
-    low = df["Low"].min()
+    try:
+        high = float(df["High"].max())
+        low = float(df["Low"].min())
 
-    mid = (high + low) / 2
+        mid = (high + low) / 2
 
-    return {
-        "buy": round(low, 5),
-        "sell": round(high, 5),
-        "t1": round(mid, 5),
-        "t2": round(mid + (high - mid) * 0.5, 5),
-        "t3": round(high, 5)
-    }
+        return {
+            "buy": round(low, 5),
+            "sell": round(high, 5),
+            "t1": round(mid, 5),
+            "t2": round(mid + (high - mid) * 0.5, 5),
+            "t3": round(high, 5)
+        }
+
+    except:
+        return {
+            "buy": 0,
+            "sell": 0,
+            "t1": 0,
+            "t2": 0,
+            "t3": 0
+        }
 
 
 # ==============================
@@ -143,6 +179,7 @@ st.title("🚀 TITAN FULL ENGINE (STABLE)")
 
 spain_time = datetime.now()
 st.write(f"Spain Time: {spain_time}")
+
 
 # ==============================
 # RUN ENGINE
