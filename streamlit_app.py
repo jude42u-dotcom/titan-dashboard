@@ -1,142 +1,126 @@
 import streamlit as st
-import requests
 import pandas as pd
+import yfinance as yf
 from datetime import datetime
-import numpy as np
-import pytz
 
-st.set_page_config(layout="wide")
-
-SPAIN = pytz.timezone("Europe/Madrid")
-
-# ---------------------------
-# SAFE DATA FETCH (FIXED)
-# ---------------------------
-def get_ohlc(pair="EURUSD=X", interval="5m", period="5d"):
+# ==============================
+# DATA FETCH (STABLE)
+# ==============================
+def get_ohlc(symbol):
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{pair}?interval={interval}&range={period}"
-        r = requests.get(url, timeout=5)
+        df = yf.download(symbol, period="5d", interval="1h")
 
-        if r.status_code != 200:
-            raise Exception("Bad response")
-
-        data = r.json()
-
-        res = data["chart"]["result"][0]
-        ts = res["timestamp"]
-        ohlc = res["indicators"]["quote"][0]
-
-        df = pd.DataFrame({
-            "time": pd.to_datetime(ts, unit="s"),
-            "open": ohlc["open"],
-            "high": ohlc["high"],
-            "low": ohlc["low"],
-            "close": ohlc["close"],
-        }).dropna()
+        if df is None or df.empty:
+            return None
 
         return df
 
     except:
-        # 🔥 FALLBACK DATA (prevents crash)
-        now = datetime.now()
-        df = pd.DataFrame({
-            "time": pd.date_range(end=now, periods=100, freq="5min"),
-            "open": np.random.rand(100),
-            "high": np.random.rand(100),
-            "low": np.random.rand(100),
-            "close": np.random.rand(100),
-        })
-        return df
+        return None
 
-# ---------------------------
-# STRUCTURE
-# ---------------------------
-def structure_engine(df):
-    highs = df["high"].rolling(10).max()
-    lows = df["low"].rolling(10).min()
 
-    if highs.iloc[-1] > highs.iloc[-20]:
-        return "HFL", "bullish"
-    elif highs.iloc[-1] < highs.iloc[-20]:
-        return "LFHL", "bearish"
+# ==============================
+# STRUCTURE ENGINE (HF / LF)
+# ==============================
+def detect_structure(df):
+    highs = df["High"].tail(5).values
+    lows = df["Low"].tail(5).values
+
+    if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
+        return "HFL"   # Higher High / Higher Low
+
+    elif highs[-1] < highs[-2] and lows[-1] < lows[-2]:
+        return "LFHL"  # Lower High / Lower Low
+
     else:
-        return "NEUTRAL", "neutral"
+        return "RANGE"
 
-# ---------------------------
-# REGIME
-# ---------------------------
-def regime_engine(df):
-    rng = df["high"].iloc[-1] - df["low"].iloc[-1]
-    avg = (df["high"] - df["low"]).rolling(20).mean().iloc[-1]
 
-    return "EXPANSION" if rng > avg else "COMPRESSION"
+# ==============================
+# REGIME ENGINE
+# ==============================
+def detect_regime(df):
+    rng = df["High"].max() - df["Low"].min()
 
-# ---------------------------
-# TRSE
-# ---------------------------
-def trse_engine(df):
-    daily = df.resample("1D", on="time").agg({"high":"max","low":"min"}).dropna()
-    ranges = daily["high"] - daily["low"]
+    if rng > 0.010:
+        return "EXPANSION"
+    else:
+        return "COMPRESSION"
 
-    delay = 0
-    for i in range(1, min(5, len(ranges))):
-        if ranges.iloc[-i] < ranges.mean():
-            delay += 1
 
-    regime = f"RDS Day {delay}" if delay >= 3 else f"Trend Day {delay}"
-    return delay, regime
+# ==============================
+# SCORE ENGINE
+# ==============================
+def compute_score(structure, regime):
+    score = 50
 
-# ---------------------------
-# SCORE
-# ---------------------------
-def score_engine(structure, regime, delay):
-    score = 0
+    if structure == "HFL":
+        score += 15
+    elif structure == "LFHL":
+        score += 10
 
-    if structure in ["HFL", "LFHL"]:
-        score += 30
+    if regime == "EXPANSION":
+        score += 10
 
-    score += 30 if regime == "EXPANSION" else 10
-    score += 30 if delay >= 3 else 10
+    return score
 
-    return min(score, 100)
 
-# ---------------------------
-# LEVELS
-# ---------------------------
-def levels(df, bias):
-    high = df["high"].iloc[-1]
-    low = df["low"].iloc[-1]
+# ==============================
+# TRSE ENGINE (DAY + DELAY)
+# ==============================
+def compute_trse(df):
+    closes = df["Close"].tail(4).values
+
+    if len(closes) < 4:
+        return "Trend Day 0", 0
+
+    if closes[-1] > closes[-2] > closes[-3]:
+        return "Trend Day 2", 2
+
+    elif closes[-1] < closes[-2] < closes[-3]:
+        return "Trend Day 2", 2
+
+    else:
+        return "Rotation Day", 1
+
+
+# ==============================
+# ZONES + TARGETS
+# ==============================
+def compute_levels(df):
+    high = df["High"].max()
+    low = df["Low"].min()
+
     mid = (high + low) / 2
 
-    if bias == "bullish":
-        return mid, high, high*1.001, high*1.002, high*1.003
-    elif bias == "bearish":
-        return low, mid, low*0.999, low*0.998, low*0.997
-    else:
-        return low, high, mid, high, low
-
-# ---------------------------
-# TIME WINDOWS
-# ---------------------------
-def time_windows():
     return {
-        "London 1": "08:30–10:00",
-        "London 2": "11:30–13:00",
-        "NY": "14:30–16:30"
+        "buy": round(low, 5),
+        "sell": round(high, 5),
+        "t1": round(mid, 5),
+        "t2": round(mid + (high - mid) * 0.5, 5),
+        "t3": round(high, 5)
     }
 
-# ---------------------------
-# ENGINE
-# ---------------------------
+
+# ==============================
+# RUN PAIR ENGINE
+# ==============================
 def run_pair(name, symbol):
     df = get_ohlc(symbol)
 
-    structure, bias = structure_engine(df)
-    regime = regime_engine(df)
-    delay, trse = trse_engine(df)
-    score = score_engine(structure, regime, delay)
+    if df is None:
+        return {
+            "pair": name,
+            "error": "No data"
+        }
 
-    buy, sell, t1, t2, t3 = levels(df, bias)
+    structure = detect_structure(df)
+    regime = detect_regime(df)
+    score = compute_score(structure, regime)
+    trse_day, delay = compute_trse(df)
+    levels = compute_levels(df)
+
+    bias = "bullish" if structure == "HFL" else "bearish"
 
     return {
         "pair": name,
@@ -144,51 +128,64 @@ def run_pair(name, symbol):
         "bias": bias,
         "regime": regime,
         "score": score,
-        "delay": delay,
-        "trse": trse,
-        "buy": round(buy,5),
-        "sell": round(sell,5),
-        "t1": round(t1,5),
-        "t2": round(t2,5),
-        "t3": round(t3,5)
+        "levels": levels,
+        "trse": trse_day,
+        "delay": delay
     }
 
-# ---------------------------
-# UI
-# ---------------------------
+
+# ==============================
+# STREAMLIT UI
+# ==============================
+st.set_page_config(layout="wide")
+
 st.title("🚀 TITAN FULL ENGINE (STABLE)")
 
-now = datetime.now(SPAIN)
-st.write(f"Spain Time: {now}")
+spain_time = datetime.now()
+st.write(f"Spain Time: {spain_time}")
 
+# ==============================
+# RUN ENGINE
+# ==============================
 eur = run_pair("EURUSD", "EURUSD=X")
 gbp = run_pair("GBPUSD", "GBPUSD=X")
 
-def display(d):
-    st.header(d["pair"])
 
-    st.write(f"Structure: {d['structure']}")
-    st.write(f"Bias: {d['bias']}")
-    st.write(f"Regime: {d['regime']}")
-    st.write(f"Score: {d['score']}")
+def display(pair):
+    if "error" in pair:
+        st.error(f"{pair['pair']} → No data available")
+        return
+
+    st.header(pair["pair"])
+
+    st.write(f"Structure: {pair['structure']}")
+    st.write(f"Bias: {pair['bias']}")
+    st.write(f"Regime: {pair['regime']}")
+    st.write(f"Score: {pair['score']}")
 
     st.subheader("Zones")
-    st.write(f"Buy: {d['buy']}")
-    st.write(f"Sell: {d['sell']}")
+    st.write(f"Buy: {pair['levels']['buy']}")
+    st.write(f"Sell: {pair['levels']['sell']}")
 
     st.subheader("Targets")
-    st.write(f"T1: {d['t1']}")
-    st.write(f"T2: {d['t2']}")
-    st.write(f"T3: {d['t3']}")
+    st.write(f"T1: {pair['levels']['t1']}")
+    st.write(f"T2: {pair['levels']['t2']}")
+    st.write(f"T3: {pair['levels']['t3']}")
 
     st.subheader("TRSE")
-    st.write(f"{d['trse']}")
-    st.write(f"Delay: {d['delay']}")
+    st.write(pair["trse"])
+    st.write(f"Delay: {pair['delay']}")
 
     st.subheader("Time Windows")
-    for k,v in time_windows().items():
-        st.write(f"{k}: {v}")
+    st.write("London 1: 08:30–10:00")
+    st.write("London 2: 11:30–13:00")
+    st.write("NY: 14:30–16:30")
 
+    st.divider()
+
+
+# ==============================
+# DISPLAY
+# ==============================
 display(eur)
-st.divider()
 display(gbp)
