@@ -1,80 +1,211 @@
 import streamlit as st
-import json
-import os
-from datetime import datetime
+import requests
+import pandas as pd
+from datetime import datetime, timedelta
+import numpy as np
 import pytz
 
-from titan_engine import run_engine
+st.set_page_config(layout="wide")
 
-SPAIN_TZ = pytz.timezone("Europe/Madrid")
-SAVE_FILE = "titan_output.json"
+SPAIN = pytz.timezone("Europe/Madrid")
 
-def is_after_update_time():
-    now = datetime.now(SPAIN_TZ)
-    return now.hour > 10 or (now.hour == 10 and now.minute >= 50)
+# ---------------------------
+# DATA
+# ---------------------------
+def get_ohlc(pair="EURUSD=X", interval="5m", period="5d"):
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{pair}?interval={interval}&range={period}"
+    r = requests.get(url).json()
+    res = r["chart"]["result"][0]
+    ts = res["timestamp"]
+    ohlc = res["indicators"]["quote"][0]
 
-def load_data():
-    if os.path.exists(SAVE_FILE):
-        with open(SAVE_FILE, "r") as f:
-            return json.load(f)
-    return None
+    df = pd.DataFrame({
+        "time": pd.to_datetime(ts, unit="s"),
+        "open": ohlc["open"],
+        "high": ohlc["high"],
+        "low": ohlc["low"],
+        "close": ohlc["close"],
+    }).dropna()
 
-def save_data(data):
-    with open(SAVE_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    return df
 
-st.set_page_config(page_title="TITAN Dashboard")
-st.title("🚀 TITAN Trading Dashboard")
+# ---------------------------
+# STRUCTURE ENGINE (LFHL / HFL)
+# ---------------------------
+def structure_engine(df):
+    highs = df["high"].rolling(10).max()
+    lows = df["low"].rolling(10).min()
 
-now = datetime.now(SPAIN_TZ)
-st.write(f"🕒 Spain Time: {now}")
+    last_high = highs.iloc[-1]
+    prev_high = highs.iloc[-20]
+    last_low = lows.iloc[-1]
+    prev_low = lows.iloc[-20]
 
-data = load_data()
+    if last_high < prev_high and last_low < prev_low:
+        return "LFHL", "bearish"
+    elif last_high > prev_high and last_low > prev_low:
+        return "HFL", "bullish"
+    else:
+        return "NEUTRAL", "neutral"
 
-if is_after_update_time():
+# ---------------------------
+# REGIME (COMPRESSION / EXPANSION)
+# ---------------------------
+def regime_engine(df):
+    rng = df["high"].iloc[-1] - df["low"].iloc[-1]
+    avg = (df["high"] - df["low"]).rolling(20).mean().iloc[-1]
 
-    if data is None:
-        st.warning("⚙️ Running FULL TITAN engine...")
+    if rng > avg:
+        return "EXPANSION"
+    else:
+        return "COMPRESSION"
 
-        data = run_engine()
+# ---------------------------
+# TRSE (Delay Days)
+# ---------------------------
+def trse_engine(df):
+    daily = df.resample("1D", on="time").agg({"high":"max","low":"min"}).dropna()
+    ranges = daily["high"] - daily["low"]
 
-        if "ERROR" in data:
-            st.error(data["ERROR"])
-        else:
-            save_data(data)
-            st.success("✅ TITAN updated")
+    delay = 0
+    for i in range(1, min(5, len(ranges))):
+        if ranges.iloc[-i] < ranges.mean():
+            delay += 1
 
-else:
-    st.info("⏳ Waiting for 10:50 Spain time")
+    if delay >= 3:
+        regime = f"RDS Day {delay}"
+    else:
+        regime = f"Trend Day {delay}"
 
-if data and "ERROR" not in data:
+    return delay, regime
 
-    for pair in data:
-        st.header(pair)
+# ---------------------------
+# SCORING
+# ---------------------------
+def score_engine(structure, regime, delay):
+    score = 0
 
-        d = data[pair]
+    if structure == "HFL":
+        score += 30
+    elif structure == "LFHL":
+        score += 30
 
-        st.write(f"**Bias:** {d['macro_bias']}")
-        st.write(f"**Regime:** {d['regime']}")
-        st.write(f"**Score:** {d['score']}")
+    if regime == "EXPANSION":
+        score += 30
+    else:
+        score += 10
 
-        st.write("### Zones")
-        st.write(f"Buy: {d['buy_zone']}")
-        st.write(f"Sell: {d['sell_zone']}")
+    if delay >= 3:
+        score += 30
+    else:
+        score += 10
 
-        st.write("### Targets")
-        st.write(f"T1: {d['t1']}")
-        st.write(f"T2: {d['t2']}")
-        st.write(f"T3: {d['t3']}")
+    return min(score, 100)
 
-        st.write("### Invalidation")
-        st.write(f"Up: {d['invalid_up']}")
-        st.write(f"Down: {d['invalid_down']}")
+# ---------------------------
+# ZONES + TARGETS
+# ---------------------------
+def levels(df, bias):
+    high = df["high"].iloc[-1]
+    low = df["low"].iloc[-1]
+    mid = (high + low) / 2
 
-        st.markdown("---")
+    if bias == "bullish":
+        buy = mid - (high - low) * 0.25
+        sell = high
+        t1 = high + (high - low) * 0.5
+        t2 = high + (high - low)
+        t3 = high + (high - low) * 1.5
+    elif bias == "bearish":
+        sell = mid + (high - low) * 0.25
+        buy = low
+        t1 = low - (high - low) * 0.5
+        t2 = low - (high - low)
+        t3 = low - (high - low) * 1.5
+    else:
+        buy = low
+        sell = high
+        t1 = mid
+        t2 = high
+        t3 = low
 
-elif data and "ERROR" in data:
-    st.error(data["ERROR"])
+    return buy, sell, t1, t2, t3
 
-else:
-    st.warning("No data yet.")
+# ---------------------------
+# TIME WINDOWS (SPAIN)
+# ---------------------------
+def time_windows():
+    return {
+        "London 1": "08:30–10:00",
+        "London 2": "11:30–13:00",
+        "NY": "14:30–16:30"
+    }
+
+# ---------------------------
+# ENGINE
+# ---------------------------
+def run_pair(name, symbol):
+    df = get_ohlc(symbol)
+
+    structure, bias = structure_engine(df)
+    regime = regime_engine(df)
+    delay, trse = trse_engine(df)
+    score = score_engine(structure, regime, delay)
+
+    buy, sell, t1, t2, t3 = levels(df, bias)
+
+    return {
+        "pair": name,
+        "structure": structure,
+        "bias": bias,
+        "regime": regime,
+        "score": score,
+        "delay": delay,
+        "trse": trse,
+        "buy": round(buy,5),
+        "sell": round(sell,5),
+        "t1": round(t1,5),
+        "t2": round(t2,5),
+        "t3": round(t3,5)
+    }
+
+# ---------------------------
+# UI
+# ---------------------------
+st.title("🚀 TITAN FULL ENGINE")
+
+now = datetime.now(SPAIN)
+st.write(f"Spain Time: {now}")
+
+eur = run_pair("EURUSD", "EURUSD=X")
+gbp = run_pair("GBPUSD", "GBPUSD=X")
+
+def display(d):
+    st.header(d["pair"])
+
+    st.write(f"Structure: {d['structure']}")
+    st.write(f"Bias: {d['bias']}")
+    st.write(f"Regime: {d['regime']}")
+    st.write(f"Score: {d['score']}")
+
+    st.subheader("Zones")
+    st.write(f"Buy: {d['buy']}")
+    st.write(f"Sell: {d['sell']}")
+
+    st.subheader("Targets")
+    st.write(f"T1: {d['t1']}")
+    st.write(f"T2: {d['t2']}")
+    st.write(f"T3: {d['t3']}")
+
+    st.subheader("TRSE")
+    st.write(f"{d['trse']}")
+    st.write(f"Delay: {d['delay']}")
+
+    st.subheader("Time Windows")
+    tw = time_windows()
+    for k,v in tw.items():
+        st.write(f"{k}: {v}")
+
+display(eur)
+st.divider()
+display(gbp)
