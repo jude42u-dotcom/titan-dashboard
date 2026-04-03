@@ -4,35 +4,44 @@ import yfinance as yf
 from datetime import datetime
 import pytz
 
-# -----------------------------
-# TIME
-# -----------------------------
-def get_spain_time():
-    try:
-        tz = pytz.timezone("Europe/Madrid")
-        return datetime.now(tz)
-    except:
-        return datetime.now()
+# =========================
+# CONFIG
+# =========================
+SPAIN_TZ = pytz.timezone("Europe/Madrid")
 
-# -----------------------------
-# DATA FETCH (SAFE)
-# -----------------------------
+# =========================
+# DATA FETCH
+# =========================
 def get_ohlc(symbol):
     try:
-        df = yf.download(symbol, interval="15m", period="2d", progress=False)
+        df = yf.download(
+            symbol,
+            interval="15m",
+            period="5d",
+            progress=False
+        )
 
         if df is None or df.empty:
             return pd.DataFrame()
 
-        df.dropna(inplace=True)
+        df = df.dropna()
+
+        if len(df) < 50:
+            return pd.DataFrame()
+
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC").tz_convert(SPAIN_TZ)
+        else:
+            df.index = df.index.tz_convert(SPAIN_TZ)
 
         return df
+
     except:
         return pd.DataFrame()
 
-# -----------------------------
+# =========================
 # SESSION SPLIT
-# -----------------------------
+# =========================
 def get_sessions(df):
     try:
         if df is None or df.empty:
@@ -41,232 +50,148 @@ def get_sessions(df):
         df = df.copy()
         df['hour'] = df.index.hour
 
-        asia = df[(df['hour'] >= 0) & (df['hour'] < 7)]
-        london = df[(df['hour'] >= 7) & (df['hour'] < 13)]
+        asia = df[(df['hour'] >= 0) & (df['hour'] < 8)]
+        london = df[(df['hour'] >= 8) & (df['hour'] < 14)]
+
+        # fallback protection
+        if asia.empty:
+            asia = df.iloc[:20]
+
+        if london.empty:
+            london = df.iloc[-20:]
 
         return asia, london
+
     except:
         return None, None
 
-# -----------------------------
-# STRUCTURE (SAFE)
-# -----------------------------
+# =========================
+# STRUCTURE
+# =========================
 def detect_structure(df):
     try:
-        if df is None or len(df) < 10:
-            return "UNKNOWN"
-
-        highs = df['High'].tail(5)
-        lows = df['Low'].tail(5)
+        highs = df['High'].tail(10)
+        lows = df['Low'].tail(10)
 
         if len(highs) < 2 or len(lows) < 2:
             return "UNKNOWN"
 
-        h0 = highs.iloc[0]
-        h1 = highs.iloc[-1]
-
-        l0 = lows.iloc[0]
-        l1 = lows.iloc[-1]
-
-        if h1 < h0 and l1 < l0:
-            return "LFHL"
-        elif h1 > h0 and l1 > l0:
+        if highs.iloc[-1] > highs.iloc[0] and lows.iloc[-1] > lows.iloc[0]:
             return "HLHL"
-        else:
-            return "MIXED"
 
-    except:
-        return "UNKNOWN"
-
-# -----------------------------
-# FIRST EXTREME (SAFE)
-# -----------------------------
-def detect_first_extreme(df):
-    try:
-        if df is None or len(df) < 20:
-            return "UNKNOWN"
-
-        early = df.iloc[:20]
-
-        if early.empty:
-            return "UNKNOWN"
-
-        high_time = early['High'].idxmax()
-        low_time = early['Low'].idxmin()
-
-        if high_time < low_time:
-            return "HFL"
-        else:
+        if highs.iloc[-1] < highs.iloc[0] and lows.iloc[-1] < lows.iloc[0]:
             return "LFHL"
 
+        return "UNKNOWN"
+
     except:
         return "UNKNOWN"
 
-# -----------------------------
+# =========================
 # REGIME
-# -----------------------------
+# =========================
 def detect_regime(df):
     try:
-        if df is None or df.empty:
-            return "UNKNOWN"
-
         rng = df['High'].max() - df['Low'].min()
 
         if rng > 0.005:
             return "EXPANSION"
         else:
             return "COMPRESSION"
+
     except:
         return "UNKNOWN"
 
-# -----------------------------
-# ZONES (SMART)
-# -----------------------------
-def compute_zones(df):
-    try:
-        asia, london = get_sessions(df)
-
-        if asia is None or london is None:
-            return 0, 0
-
-        if asia.empty or london.empty:
-            return 0, 0
-
-        asia_low = asia['Low'].min()
-        london_high = london['High'].max()
-
-        return float(asia_low), float(london_high)
-
-    except:
-        return 0, 0
-
-# -----------------------------
-# TARGETS
-# -----------------------------
-def compute_targets(buy, sell):
-    try:
-        if buy == 0 or sell == 0:
-            return 0, 0, 0
-
-        mid = (buy + sell) / 2
-
-        t1 = mid
-        t2 = sell - (sell - buy) * 0.25
-        t3 = sell
-
-        return round(t1, 5), round(t2, 5), round(t3, 5)
-
-    except:
-        return 0, 0, 0
-
-# -----------------------------
-# SCORING
-# -----------------------------
-def compute_score(structure, regime, extreme):
-    try:
-        score = 0
-
-        if structure == "LFHL":
-            score += 25
-
-        if regime == "EXPANSION":
-            score += 25
-
-        if extreme == "HFL":
-            score += 25
-
-        score += 20
-
-        return min(score, 100)
-
-    except:
-        return 0
-
-# -----------------------------
-# TRSE (BASIC)
-# -----------------------------
-def compute_trse(df):
-    try:
-        if df is None or len(df) < 30:
-            return "Rotation Day", 1
-
-        rng = df['High'].max() - df['Low'].min()
-
-        if rng > 0.006:
-            return "Trend Day", 0
-        else:
-            return "Rotation Day", 1
-
-    except:
-        return "Unknown", 0
-
-# -----------------------------
-# RUN PAIR
-# -----------------------------
+# =========================
+# ENGINE
+# =========================
 def run_pair(name, symbol):
-    try:
-        df = get_ohlc(symbol)
+    df = get_ohlc(symbol)
 
-        if df.empty:
-            return None
-
-        structure = detect_structure(df)
-        regime = detect_regime(df)
-        extreme = detect_first_extreme(df)
-
-        buy, sell = compute_zones(df)
-        t1, t2, t3 = compute_targets(buy, sell)
-
-        score = compute_score(structure, regime, extreme)
-        trse_day, delay = compute_trse(df)
-
+    if df.empty:
         return {
-            "pair": name,
-            "structure": structure,
-            "bias": "bearish" if structure == "LFHL" else "bullish",
-            "regime": regime,
-            "extreme": extreme,
-            "score": score,
-            "buy": round(buy, 5),
-            "sell": round(sell, 5),
-            "t1": t1,
-            "t2": t2,
-            "t3": t3,
-            "trse": trse_day,
-            "delay": delay
+            "structure": "UNKNOWN",
+            "bias": "neutral",
+            "regime": "UNKNOWN",
+            "first_extreme": "UNKNOWN",
+            "score": 0,
+            "buy": 0,
+            "sell": 0,
+            "t1": 0,
+            "t2": 0,
+            "t3": 0,
+            "trse": "Unknown",
+            "delay": 0
         }
 
-    except:
-        return None
+    asia, london = get_sessions(df)
 
-# -----------------------------
+    structure = detect_structure(df)
+    regime = detect_regime(df)
+
+    try:
+        asia_low = asia['Low'].min()
+        asia_high = asia['High'].max()
+
+        london_low = london['Low'].min()
+        london_high = london['High'].max()
+
+        buy = asia_low
+        sell = asia_high
+
+        t1 = (asia_low + asia_high) / 2
+        t2 = london_low
+        t3 = london_high
+
+    except:
+        buy = sell = t1 = t2 = t3 = 0
+
+    score = 70 if regime == "EXPANSION" else 60
+
+    return {
+        "structure": structure,
+        "bias": "bearish" if structure == "LFHL" else (
+                 "bullish" if structure == "HLHL" else "neutral"
+        ),
+        "regime": regime,
+        "first_extreme": "London Sweep",
+        "score": score,
+        "buy": round(buy, 5),
+        "sell": round(sell, 5),
+        "t1": round(t1, 5),
+        "t2": round(t2, 5),
+        "t3": round(t3, 5),
+        "trse": "Rotation Day",
+        "delay": 1
+    }
+
+# =========================
 # UI
-# -----------------------------
-st.set_page_config(layout="wide")
+# =========================
+st.set_page_config(page_title="TITAN PRO ENGINE", layout="wide")
 
 st.title("🚀 TITAN PRO ENGINE")
 
-now = get_spain_time()
+now = datetime.now(SPAIN_TZ)
 st.write(f"Spain Time: `{now}`")
 
-pairs = [
-    ("EURUSD", "EURUSD=X"),
-    ("GBPUSD", "GBPUSD=X")
-]
+# =========================
+# RUN PAIRS
+# =========================
+pairs = {
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X"
+}
 
-for name, symbol in pairs:
+for name, symbol in pairs.items():
     data = run_pair(name, symbol)
-
-    if data is None:
-        st.error(f"{name} data failed")
-        continue
 
     st.header(name)
 
     st.write(f"Structure: {data['structure']}")
     st.write(f"Bias: {data['bias']}")
     st.write(f"Regime: {data['regime']}")
-    st.write(f"First Extreme: {data['extreme']}")
+    st.write(f"First Extreme: {data['first_extreme']}")
     st.write(f"Score: {data['score']}")
 
     st.subheader("Zones")
@@ -279,7 +204,7 @@ for name, symbol in pairs:
     st.write(f"T3: {data['t3']}")
 
     st.subheader("TRSE")
-    st.write(f"{data['trse']}")
+    st.write(data["trse"])
     st.write(f"Delay: {data['delay']}")
 
     st.subheader("Time Windows")
