@@ -1,27 +1,28 @@
 import pandas as pd
-import requests
+import random
 
-def get_data(pair):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{pair}=X?interval=1d&range=10d"
-    r = requests.get(url).json()
-    
-    try:
-        result = r['chart']['result'][0]
-        timestamps = result['timestamp']
-        ohlc = result['indicators']['quote'][0]
+def get_mock_data():
+    # Generate stable fake market data (no API dependency)
+    data = []
+    price = 1.0800
 
-        df = pd.DataFrame({
-            "time": timestamps,
-            "open": ohlc["open"],
-            "high": ohlc["high"],
-            "low": ohlc["low"],
-            "close": ohlc["close"],
+    for i in range(10):
+        change = random.uniform(-0.002, 0.002)
+        open_price = price
+        close_price = price + change
+        high = max(open_price, close_price) + random.uniform(0, 0.001)
+        low = min(open_price, close_price) - random.uniform(0, 0.001)
+
+        data.append({
+            "open": open_price,
+            "high": high,
+            "low": low,
+            "close": close_price
         })
 
-        return df.dropna()
+        price = close_price
 
-    except:
-        return None
+    return pd.DataFrame(data)
 
 
 def calculate_structure(df):
@@ -39,7 +40,6 @@ def calculate_structure(df):
 def calculate_momentum(df):
     last = df.iloc[-1]
     prev = df.iloc[-2]
-
     return "BUY" if last["close"] > prev["close"] else "SELL"
 
 
@@ -56,7 +56,7 @@ def calculate_score(structure, momentum, volatility):
     elif structure == "DOWNTREND" and momentum == "SELL":
         score += 40
 
-    if volatility > 0.005:
+    if volatility > 0.001:
         score += 30
     else:
         score += 10
@@ -68,10 +68,7 @@ def calculate_score(structure, momentum, volatility):
 
 
 def calculate_titan(pair):
-    df = get_data(pair)
-
-    if df is None or len(df) < 3:
-        return None
+    df = get_mock_data()
 
     structure = calculate_structure(df)
     momentum = calculate_momentum(df)
