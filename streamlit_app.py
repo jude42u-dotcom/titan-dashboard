@@ -3,9 +3,9 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 
-# ==============================
-# DATA FETCH (ROBUST)
-# ==============================
+# =========================
+# DATA ENGINE (FIXED)
+# =========================
 def get_ohlc(symbol):
     try:
         df = yf.download(symbol, period="5d", interval="1h", progress=False)
@@ -13,7 +13,18 @@ def get_ohlc(symbol):
         if df is None or df.empty:
             return None
 
-        df = df.dropna()
+        # Flatten MultiIndex if exists
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        # Normalize columns
+        df.columns = [c.lower() for c in df.columns]
+
+        required = ["open", "high", "low", "close"]
+        if not all(col in df.columns for col in required):
+            return None
+
+        df = df[required].astype(float).dropna()
 
         if df.empty:
             return None
@@ -24,99 +35,43 @@ def get_ohlc(symbol):
         return None
 
 
-# ==============================
-# STRUCTURE ENGINE (SAFE)
-# ==============================
+# =========================
+# STRUCTURE ENGINE
+# =========================
 def detect_structure(df):
-    try:
-        if df is None or len(df) < 3:
-            return "RANGE"
+    highs = df["high"].tail(5).values
+    lows = df["low"].tail(5).values
 
-        highs = df["High"].astype(float).tail(3).values
-        lows = df["Low"].astype(float).tail(3).values
-
-        if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
-            return "HFL"
-
-        elif highs[-1] < highs[-2] and lows[-1] < lows[-2]:
-            return "LFHL"
-
-        else:
-            return "RANGE"
-
-    except:
-        return "RANGE"
+    if highs[-1] < highs[-2] and lows[-1] < lows[-2]:
+        return "LFHL", "bearish"
+    elif highs[-1] > highs[-2] and lows[-1] > lows[-2]:
+        return "HFHL", "bullish"
+    else:
+        return "RANGE", "neutral"
 
 
-# ==============================
-# REGIME ENGINE (SAFE)
-# ==============================
+# =========================
+# REGIME ENGINE
+# =========================
 def detect_regime(df):
-    try:
-        if df is None or df.empty:
-            return "COMPRESSION"
+    rng = df["high"].max() - df["low"].min()
 
-        high = float(df["High"].max())
-        low = float(df["Low"].min())
-
-        rng = high - low
-
-        if rng > 0.010:
-            return "EXPANSION"
-        else:
-            return "COMPRESSION"
-
-    except:
-        return "COMPRESSION"
+    if rng > 0.010:
+        return "EXPANSION", 70
+    else:
+        return "COMPRESSION", 60
 
 
-# ==============================
-# SCORE ENGINE
-# ==============================
-def compute_score(structure, regime):
-    score = 50
-
-    if structure == "HFL":
-        score += 15
-    elif structure == "LFHL":
-        score += 10
-
-    if regime == "EXPANSION":
-        score += 10
-
-    return score
-
-
-# ==============================
-# TRSE ENGINE (SAFE)
-# ==============================
-def compute_trse(df):
-    try:
-        if df is None or len(df) < 4:
-            return "Trend Day 0", 0
-
-        closes = df["Close"].astype(float).tail(4).values
-
-        if closes[-1] > closes[-2] > closes[-3]:
-            return "Trend Day 2", 2
-
-        elif closes[-1] < closes[-2] < closes[-3]:
-            return "Trend Day 2", 2
-
-        else:
-            return "Rotation Day", 1
-
-    except:
-        return "Trend Day 0", 0
-
-
-# ==============================
-# LEVELS ENGINE (SAFE)
-# ==============================
+# =========================
+# LEVEL ENGINE
+# =========================
 def compute_levels(df):
     try:
-        high = float(df["High"].max())
-        low = float(df["Low"].min())
+        high = df["high"].max()
+        low = df["low"].min()
+
+        if high == 0 or low == 0:
+            return None
 
         mid = (high + low) / 2
 
@@ -129,34 +84,39 @@ def compute_levels(df):
         }
 
     except:
-        return {
-            "buy": 0,
-            "sell": 0,
-            "t1": 0,
-            "t2": 0,
-            "t3": 0
-        }
+        return None
 
 
-# ==============================
-# RUN PAIR ENGINE
-# ==============================
+# =========================
+# TRSE ENGINE
+# =========================
+def compute_trse(df):
+    closes = df["close"].tail(3).values
+
+    if len(closes) < 3:
+        return "Unknown", 0
+
+    if closes[-1] > closes[-2] > closes[-3]:
+        return "Trend Day", 2
+    elif closes[-1] < closes[-2] < closes[-3]:
+        return "Trend Day", 2
+    else:
+        return "Rotation Day", 1
+
+
+# =========================
+# RUN ENGINE
+# =========================
 def run_pair(name, symbol):
     df = get_ohlc(symbol)
 
     if df is None:
-        return {
-            "pair": name,
-            "error": "No data"
-        }
+        return None
 
-    structure = detect_structure(df)
-    regime = detect_regime(df)
-    score = compute_score(structure, regime)
-    trse_day, delay = compute_trse(df)
+    structure, bias = detect_structure(df)
+    regime, score = detect_regime(df)
     levels = compute_levels(df)
-
-    bias = "bullish" if structure == "HFL" else "bearish"
+    trse, delay = compute_trse(df)
 
     return {
         "pair": name,
@@ -165,32 +125,17 @@ def run_pair(name, symbol):
         "regime": regime,
         "score": score,
         "levels": levels,
-        "trse": trse_day,
+        "trse": trse,
         "delay": delay
     }
 
 
-# ==============================
-# STREAMLIT UI
-# ==============================
-st.set_page_config(layout="wide")
-
-st.title("🚀 TITAN FULL ENGINE (STABLE)")
-
-spain_time = datetime.now()
-st.write(f"Spain Time: {spain_time}")
-
-
-# ==============================
-# RUN ENGINE
-# ==============================
-eur = run_pair("EURUSD", "EURUSD=X")
-gbp = run_pair("GBPUSD", "GBPUSD=X")
-
-
+# =========================
+# DISPLAY ENGINE
+# =========================
 def display(pair):
-    if "error" in pair:
-        st.error(f"{pair['pair']} → No data available")
+    if pair is None:
+        st.error("Data not available")
         return
 
     st.header(pair["pair"])
@@ -199,6 +144,10 @@ def display(pair):
     st.write(f"Bias: {pair['bias']}")
     st.write(f"Regime: {pair['regime']}")
     st.write(f"Score: {pair['score']}")
+
+    if pair["levels"] is None:
+        st.warning("No valid price data")
+        return
 
     st.subheader("Zones")
     st.write(f"Buy: {pair['levels']['buy']}")
@@ -218,11 +167,18 @@ def display(pair):
     st.write("London 2: 11:30–13:00")
     st.write("NY: 14:30–16:30")
 
-    st.divider()
 
+# =========================
+# MAIN APP
+# =========================
+st.set_page_config(page_title="TITAN FULL ENGINE", layout="centered")
 
-# ==============================
-# DISPLAY
-# ==============================
+st.title("🚀 TITAN FULL ENGINE (STABLE)")
+st.write("Spain Time:", datetime.now())
+
+eur = run_pair("EURUSD", "EURUSD=X")
+gbp = run_pair("GBPUSD", "GBPUSD=X")
+
 display(eur)
+st.divider()
 display(gbp)
