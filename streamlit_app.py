@@ -12,7 +12,7 @@ SPAIN_TZ = pytz.timezone("Europe/Madrid")
 SNAPSHOT_FILE = "titan_snapshot.json"
 
 # ==============================
-# DATA FETCH
+# DATA FETCH (SAFE)
 # ==============================
 def get_ohlc(symbol):
     try:
@@ -23,7 +23,7 @@ def get_ohlc(symbol):
             progress=False
         )
 
-        # Fallback if weak data
+        # fallback to 1H if weak
         if df is None or df.empty or len(df) < 30:
             df = yf.download(
                 symbol,
@@ -37,6 +37,13 @@ def get_ohlc(symbol):
 
         df = df.dropna()
 
+        # 🔥 FORCE NUMERIC (CRITICAL FIX)
+        for col in ["Open", "High", "Low", "Close"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df = df.dropna()
+
+        # timezone fix
         if df.index.tz is None:
             df.index = df.index.tz_localize("UTC").tz_convert(SPAIN_TZ)
         else:
@@ -48,7 +55,7 @@ def get_ohlc(symbol):
         return pd.DataFrame()
 
 # ==============================
-# STRUCTURE DETECTION (SAFE)
+# STRUCTURE DETECTION
 # ==============================
 def detect_structure(df):
     if df is None or len(df) < 20:
@@ -68,57 +75,67 @@ def detect_structure(df):
         return "UNKNOWN"
 
 # ==============================
-# ENGINE CORE
+# ENGINE CORE (FULLY SAFE)
 # ==============================
 def run_pair(name, symbol):
     df = get_ohlc(symbol)
 
     if df.empty:
+        return default_output()
+
+    try:
+        structure = detect_structure(df)
+
+        last = float(df["Close"].iloc[-1])
+        high = float(df["High"].max())
+        low = float(df["Low"].min())
+
+        rng = high - low
+
+        buy = round(low + rng * 0.25, 5)
+        sell = round(high - rng * 0.25, 5)
+
+        t1 = round((buy + sell) / 2, 5)
+        t2 = round(t1 + (rng * 0.25), 5)
+        t3 = round(sell, 5)
+
+        bias = "bullish" if last > t1 else "bearish"
+
         return {
-            "structure": "UNKNOWN",
-            "bias": "neutral",
-            "regime": "UNKNOWN",
-            "first_extreme": "UNKNOWN",
-            "score": 0,
-            "buy": 0,
-            "sell": 0,
-            "t1": 0,
-            "t2": 0,
-            "t3": 0,
-            "trse": "Unknown",
-            "delay": 0
+            "structure": structure,
+            "bias": bias,
+            "regime": "EXPANSION",
+            "first_extreme": "London Sweep",
+            "score": 70,
+            "buy": buy,
+            "sell": sell,
+            "t1": t1,
+            "t2": t2,
+            "t3": t3,
+            "trse": "Rotation Day",
+            "delay": 1
         }
 
-    structure = detect_structure(df)
+    except:
+        return default_output()
 
-    last = float(df["Close"].iloc[-1])
-    high = float(df["High"].max())
-    low = float(df["Low"].min())
-
-    rng = high - low
-
-    buy = round(low + rng * 0.25, 5)
-    sell = round(high - rng * 0.25, 5)
-
-    t1 = round((buy + sell) / 2, 5)
-    t2 = round(t1 + (rng * 0.25), 5)
-    t3 = round(sell, 5)
-
-    bias = "bullish" if last > t1 else "bearish"
-
+# ==============================
+# DEFAULT OUTPUT (SAFE FALLBACK)
+# ==============================
+def default_output():
     return {
-        "structure": structure,
-        "bias": bias,
-        "regime": "EXPANSION",
-        "first_extreme": "London Sweep",
-        "score": 70,
-        "buy": float(buy),
-        "sell": float(sell),
-        "t1": float(t1),
-        "t2": float(t2),
-        "t3": float(t3),
-        "trse": "Rotation Day",
-        "delay": 1
+        "structure": "UNKNOWN",
+        "bias": "neutral",
+        "regime": "UNKNOWN",
+        "first_extreme": "UNKNOWN",
+        "score": 0,
+        "buy": 0,
+        "sell": 0,
+        "t1": 0,
+        "t2": 0,
+        "t3": 0,
+        "trse": "Unknown",
+        "delay": 0
     }
 
 # ==============================
