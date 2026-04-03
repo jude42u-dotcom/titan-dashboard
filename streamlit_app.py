@@ -1,96 +1,56 @@
-import streamlit as st
-import json
-import os
-from datetime import datetime
-import pytz
+import requests
 
-# IMPORT TITAN ENGINE
-from titan_engine import run_engine
+API_KEY = "e7636f5efb884afc9f706a6834e716f6"
+BASE_URL = "https://api.twelvedata.com/time_series"
 
 # ============================
-# CONFIG
+# FETCH DATA
 # ============================
-SPAIN_TZ = pytz.timezone("Europe/Madrid")
-SAVE_FILE = "titan_output.json"
+def fetch_data(symbol, interval, outputsize=100):
+    url = f"{BASE_URL}?symbol={symbol}&interval={interval}&outputsize={outputsize}&apikey={API_KEY}"
+    response = requests.get(url).json()
 
-# ============================
-# TIME CHECK
-# ============================
-def is_after_update_time():
-    now = datetime.now(SPAIN_TZ)
-    return now.hour > 10 or (now.hour == 10 and now.minute >= 50)
+    if "values" not in response:
+        raise Exception(f"API error for {symbol}")
 
-# ============================
-# LOAD / SAVE OUTPUT
-# ============================
-def load_saved_output():
-    if os.path.exists(SAVE_FILE):
-        with open(SAVE_FILE, "r") as f:
-            return json.load(f)
-    return None
-
-def save_output(data):
-    with open(SAVE_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    return response["values"]
 
 # ============================
-# MAIN APP
+# CORE ENGINE
 # ============================
-st.set_page_config(page_title="TITAN Dashboard", layout="wide")
+def run_engine():
+    
+    # FETCH DATA (AUTO)
+    eurusd_m1 = fetch_data("EUR/USD", "1min", 100)
+    gbpusd_m1 = fetch_data("GBP/USD", "1min", 100)
 
-st.title("🚀 TITAN Trading Dashboard")
+    # SIMPLE PLACEHOLDER LOGIC (we upgrade later)
+    eur_price = float(eurusd_m1[0]["close"])
+    gbp_price = float(gbpusd_m1[0]["close"])
 
-now = datetime.now(SPAIN_TZ)
-st.write(f"🕒 Spain Time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-
-# ============================
-# ENGINE EXECUTION
-# ============================
-data = load_saved_output()
-
-st.write("DEBUG: Loaded data =", data)
-
-if is_after_update_time():
-    if data is None:
-        st.warning("⚙️ Running TITAN engine (daily update)...")
-        try:
-            data = run_engine()
-            st.write("DEBUG: Engine output =", data)
-            save_output(data)
-        except Exception as e:
-            st.error(f"ENGINE ERROR: {e}")
-else:
-    st.info("⏳ Waiting for 10:50 Spain time update...")
-
-# ============================
-# DISPLAY OUTPUT
-# ============================
-if data:
-    st.success("✅ Data loaded successfully")
-
-    for pair in data:
-        st.header(pair)
-
-        d = data[pair]
-
-        st.write(f"**Macro Bias:** {d.get('macro_bias', '-')}")
-        st.write(f"**Regime:** {d.get('regime', '-')}")
-        st.write(f"**Confluence Score:** {d.get('score', '-')}")
-
-        st.write("### Zones")
-        st.write(f"Buy Zone: {d.get('buy_zone', '-')}")
-        st.write(f"Sell Zone: {d.get('sell_zone', '-')}")
-
-        st.write("### Targets")
-        st.write(f"T1: {d.get('t1', '-')}")
-        st.write(f"T2: {d.get('t2', '-')}")
-        st.write(f"T3: {d.get('t3', '-')}")
-
-        st.write("### Invalidation")
-        st.write(f"Up: {d.get('invalid_up', '-')}")
-        st.write(f"Down: {d.get('invalid_down', '-')}")
-
-        st.markdown("---")
-
-else:
-    st.warning("❌ No data available")
+    return {
+        "EURUSD": {
+            "macro_bias": "BUY" if eur_price > 1.05 else "SELL",
+            "regime": "Expansion",
+            "score": 75,
+            "buy_zone": eur_price - 0.002,
+            "sell_zone": eur_price + 0.002,
+            "t1": eur_price + 0.003,
+            "t2": eur_price + 0.006,
+            "t3": eur_price + 0.010,
+            "invalid_up": eur_price + 0.015,
+            "invalid_down": eur_price - 0.015
+        },
+        "GBPUSD": {
+            "macro_bias": "BUY" if gbp_price > 1.20 else "SELL",
+            "regime": "Expansion",
+            "score": 78,
+            "buy_zone": gbp_price - 0.002,
+            "sell_zone": gbp_price + 0.002,
+            "t1": gbp_price + 0.003,
+            "t2": gbp_price + 0.006,
+            "t3": gbp_price + 0.010,
+            "invalid_up": gbp_price + 0.015,
+            "invalid_down": gbp_price - 0.015
+        }
+    }
