@@ -10,6 +10,25 @@ import pytz
 SPAIN_TZ = pytz.timezone("Europe/Madrid")
 
 # =========================
+# DEFAULT SAFE OUTPUT
+# =========================
+def default_output():
+    return {
+        "structure": "UNKNOWN",
+        "bias": "neutral",
+        "regime": "UNKNOWN",
+        "first_extreme": "UNKNOWN",
+        "score": 0,
+        "buy": 0,
+        "sell": 0,
+        "t1": 0,
+        "t2": 0,
+        "t3": 0,
+        "trse": "Unknown",
+        "delay": 0
+    }
+
+# =========================
 # DATA FETCH
 # =========================
 def get_ohlc(symbol):
@@ -29,6 +48,7 @@ def get_ohlc(symbol):
         if len(df) < 50:
             return pd.DataFrame()
 
+        # timezone fix
         if df.index.tz is None:
             df.index = df.index.tz_localize("UTC").tz_convert(SPAIN_TZ)
         else:
@@ -92,7 +112,7 @@ def detect_structure(df):
 # =========================
 def detect_regime(df):
     try:
-        rng = df['High'].max() - df['Low'].min()
+        rng = float(df['High'].max()) - float(df['Low'].min())
 
         if rng > 0.005:
             return "EXPANSION"
@@ -103,38 +123,29 @@ def detect_regime(df):
         return "UNKNOWN"
 
 # =========================
-# ENGINE
+# ENGINE CORE
 # =========================
 def run_pair(name, symbol):
     df = get_ohlc(symbol)
 
     if df.empty:
-        return {
-            "structure": "UNKNOWN",
-            "bias": "neutral",
-            "regime": "UNKNOWN",
-            "first_extreme": "UNKNOWN",
-            "score": 0,
-            "buy": 0,
-            "sell": 0,
-            "t1": 0,
-            "t2": 0,
-            "t3": 0,
-            "trse": "Unknown",
-            "delay": 0
-        }
+        return default_output()
 
     asia, london = get_sessions(df)
+
+    if asia is None or london is None:
+        return default_output()
 
     structure = detect_structure(df)
     regime = detect_regime(df)
 
     try:
-        asia_low = asia['Low'].min()
-        asia_high = asia['High'].max()
+        # 🔥 FORCE FLOAT (critical fix)
+        asia_low = float(asia['Low'].min())
+        asia_high = float(asia['High'].max())
 
-        london_low = london['Low'].min()
-        london_high = london['High'].max()
+        london_low = float(london['Low'].min())
+        london_high = float(london['High'].max())
 
         buy = asia_low
         sell = asia_high
@@ -144,7 +155,7 @@ def run_pair(name, symbol):
         t3 = london_high
 
     except:
-        buy = sell = t1 = t2 = t3 = 0
+        return default_output()
 
     score = 70 if regime == "EXPANSION" else 60
 
@@ -176,13 +187,16 @@ now = datetime.now(SPAIN_TZ)
 st.write(f"Spain Time: `{now}`")
 
 # =========================
-# RUN PAIRS
+# PAIRS
 # =========================
 pairs = {
     "EURUSD": "EURUSD=X",
     "GBPUSD": "GBPUSD=X"
 }
 
+# =========================
+# DISPLAY
+# =========================
 for name, symbol in pairs.items():
     data = run_pair(name, symbol)
 
