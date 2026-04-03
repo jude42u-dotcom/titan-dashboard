@@ -11,29 +11,38 @@ def get_spain_time():
     return datetime.now(tz)
 
 # =========================
-# DATA (STOOQ - RELIABLE)
+# DATA (FOREXSB - STABLE)
 # =========================
 def get_data(symbol):
     try:
         mapping = {
-            "EURUSD": "eurusd",
-            "GBPUSD": "gbpusd"
+            "EURUSD": "EURUSD.csv",
+            "GBPUSD": "GBPUSD.csv"
         }
 
-        url = f"https://stooq.com/q/d/l/?s={mapping[symbol]}&i=d"
+        url = f"https://data.forexsb.com/{mapping[symbol]}"
         df = pd.read_csv(url)
 
-        df.columns = [c.capitalize() for c in df.columns]
+        # Standardize columns
+        df.rename(columns={
+            "Time": "Date",
+            "Open": "Open",
+            "High": "High",
+            "Low": "Low",
+            "Close": "Close"
+        }, inplace=True)
+
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.sort_values("Date")
 
-        return df
+        return df.tail(500)
 
-    except:
+    except Exception as e:
+        print("DATA ERROR:", e)
         return pd.DataFrame()
 
 # =========================
-# TITAN ENGINE (SIMPLIFIED CORE)
+# TITAN ENGINE (BASE LOGIC)
 # =========================
 def run_pair(symbol):
     df = get_data(symbol)
@@ -55,7 +64,7 @@ def run_pair(symbol):
     last = float(df["Close"].iloc[-1])
     prev = float(df["Close"].iloc[-2])
 
-    # Simple structure logic (placeholder until full TITAN engine)
+    # Structure logic
     if last > prev:
         structure = "UPTREND"
         bias = "BUY"
@@ -66,10 +75,11 @@ def run_pair(symbol):
         structure = "RANGE"
         bias = "NEUTRAL"
 
-    # Basic zones & targets (temporary stable logic)
+    # Zones
     buy = round(last * 0.995, 5)
     sell = round(last * 1.005, 5)
 
+    # Targets
     t1 = round(last * 1.002, 5)
     t2 = round(last * 1.004, 5)
     t3 = round(last * 1.006, 5)
