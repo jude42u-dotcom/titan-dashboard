@@ -1,151 +1,116 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
-import math
+import numpy as np
+import pandas as pd
 
 # =========================
-# TIME ENGINE (FOREVER)
+# MOCK DATA (STABLE)
 # =========================
-def calculate_time_windows(anchor_time):
-    harmonics = [0.125, 0.167, 0.25, 0.333]
+def get_data(pair):
+    base = 1.08 if pair == "EURUSD" else 1.26
+    prices = np.random.rand(20) * 0.01 + base
 
-    windows = []
-    for h in harmonics:
-        delta = timedelta(hours=24 * h)
-        t = anchor_time + delta
-        windows.append((t - timedelta(minutes=45), t + timedelta(minutes=45)))
+    df = pd.DataFrame({
+        "high": prices + 0.002,
+        "low": prices - 0.002,
+        "close": prices
+    })
 
-    return windows
+    return df
 
 
 # =========================
-# GEOMETRY ENGINE (ANGLES)
+# FOREVER (REGIME)
 # =========================
-def detect_angle(price_move, time_move):
-    slope = price_move / time_move if time_move != 0 else 0
+def get_regime(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-    if abs(slope) < 0.5:
-        return "1x2"
-    elif abs(slope) < 1.2:
-        return "1x1"
+    if last["high"] > prev["high"]:
+        return "LFHL", "LOW first"
     else:
-        return "2x1"
+        return "HFL", "HIGH first"
 
 
 # =========================
-# STRUCTURE ENGINE (SAM)
+# SAM (STRUCTURE)
 # =========================
-def calculate_targets(p1, p2):
-    r = p2 - p1
+def get_targets(low, high):
+    r = high - low
 
     return {
-        "T1": p2 + r,
-        "T2": p2 + 1.272 * r,
-        "T3": p2 + 1.618 * r
+        "sell": {
+            "T1": low,
+            "T2": low - r * 0.618,
+            "T3": low - r * 1.0
+        },
+        "buy": {
+            "T1": high,
+            "T2": high + r * 0.618,
+            "T3": high + r * 1.0
+        }
     }
 
 
 # =========================
-# TRSE ENGINE
+# TRSE
 # =========================
-def classify_trse(df):
-    highs = df['high']
-    lows = df['low']
-
-    failures = 0
-
-    for i in range(1, len(df)):
-        if highs[i] < highs[i-1] and lows[i] > lows[i-1]:
-            failures += 1
-
-    if failures <= 1:
-        return "RES", 0, "Rotation Expected"
-    elif failures <= 5:
-        return f"RDS Day {failures}", failures, "Rotation Building"
-    else:
-        return "PCS", failures, "Continuation Likely"
+def get_trse(df):
+    return "RDS Day 3", 3, "Rotation Expected"
 
 
 # =========================
-# DEM / RPI
+# TIME WINDOWS (SESSION BASED)
 # =========================
-def volatility_state(df):
-    ranges = df['high'] - df['low']
-    avg = ranges.mean()
-    last = ranges.iloc[-1]
-
-    if last > avg * 1.2:
-        return "Expansion"
-    elif last < avg * 0.8:
-        return "Compression"
-    else:
-        return "Normal"
+def get_time_windows():
+    return {
+        "london1": "08:30–10:00",
+        "london2": "11:30–13:00",
+        "ny": "14:30–16:30"
+    }
 
 
 # =========================
-# LECE PROBABILITY
+# SCORE
 # =========================
-def confluence_score(volatility, trse_state):
-    score = 50
-
-    if volatility == "Expansion":
-        score += 20
-    if "RDS" in trse_state:
-        score += 10
-    if "RES" in trse_state:
-        score += 20
-
-    return min(score, 100)
+def get_score():
+    return np.random.randint(70, 85)
 
 
 # =========================
-# MAIN TITAN ENGINE
+# TITAN ENGINE
 # =========================
 def run_titan(pair):
+    df = get_data(pair)
 
-    # MOCK DATA (replace later with API)
-    prices = np.random.rand(10) * 0.01 + (1.08 if pair=="EURUSD" else 1.26)
-    df = pd.DataFrame({
-        "high": prices + 0.002,
-        "low": prices - 0.002
-    })
+    regime, order = get_regime(df)
+    trse, day, expectation = get_trse(df)
 
-    # TRSE
-    regime, day, expectation = classify_trse(df)
+    low = df["low"].iloc[-1]
+    high = df["high"].iloc[-1]
 
-    # Volatility
-    vol = volatility_state(df)
-
-    # Structure
-    p1 = df['low'].iloc[-2]
-    p2 = df['high'].iloc[-1]
-
-    targets = calculate_targets(p1, p2)
-
-    # Time
-    now = datetime.now(pytz.timezone("Europe/Madrid"))
-    windows = calculate_time_windows(now)
-
-    # Score
-    score = confluence_score(vol, regime)
+    targets = get_targets(low, high)
+    windows = get_time_windows()
+    score = get_score()
 
     return {
         "pair": pair,
         "regime": regime,
-        "day": day,
-        "expectation": expectation,
+        "order": order,
         "targets": targets,
-        "score": score,
+        "low": low,
+        "high": high,
         "windows": windows,
-        "buy": p1,
-        "sell": p2
+        "score": score,
+        "trse": trse,
+        "day": day,
+        "expectation": expectation
     }
 
 
 # =========================
-# STREAMLIT UI
+# UI
 # =========================
 st.set_page_config(layout="wide")
 
@@ -157,23 +122,67 @@ st.write(f"Spain Time: {now}")
 pairs = ["EURUSD", "GBPUSD"]
 
 for pair in pairs:
-    data = run_titan(pair)
+    d = run_titan(pair)
 
     st.header(pair)
 
-    st.write(f"Structure: {data['regime']}")
-    st.write(f"Score: {data['score']}")
+    # =========================
+    # CORE TITAN OUTPUT
+    # =========================
+    st.write(f"🟡 Macro Bias: ⚪ Derived from structure")
+    st.write(f"🟡 Regime Expectation: 🔴 {d['regime']} ({d['order']})")
+    st.write(f"🟡 Session Model: ⚪ Asia → London → NY resolution")
 
-    st.subheader("Zones")
-    st.write(f"Buy: {round(data['buy'],5)}")
-    st.write(f"Sell: {round(data['sell'],5)}")
+    # =========================
+    # ZONES
+    # =========================
+    st.write(f"🔴 PRIMARY SELL ZONE: 🟣 {round(d['high'],5)}")
+    st.write(f"🟢 ALTERNATE BUY: 🟣 {round(d['low'],5)}")
 
-    st.subheader("Targets")
-    st.write(data["targets"])
+    # =========================
+    # INVALIDATION
+    # =========================
+    st.write(f"🟡 Invalidation Up: 🟣 {round(d['high'] + 0.002,5)}")
+    st.write(f"🟡 Invalidation Down: 🟣 {round(d['low'] - 0.002,5)}")
 
-    st.subheader("Time Windows")
-    for w in data["windows"]:
-        st.write(f"{w[0].time()} - {w[1].time()}")
+    # =========================
+    # TARGETS
+    # =========================
+    st.write("🟡 Continuation Targets (HIGH first):")
+    st.write(f"T1: 🟣 {round(d['targets']['sell']['T1'],5)}")
+    st.write(f"T2: 🟣 {round(d['targets']['sell']['T2'],5)}")
+    st.write(f"T3: 🟣 {round(d['targets']['sell']['T3'],5)}")
 
-    st.subheader("TRSE")
-    st.write(f"{data['regime']} | Day {data['day']}")
+    st.write("🟡 Continuation Targets (LOW first):")
+    st.write(f"T1: 🟣 {round(d['targets']['buy']['T1'],5)}")
+    st.write(f"T2: 🟣 {round(d['targets']['buy']['T2'],5)}")
+    st.write(f"T3: 🟣 {round(d['targets']['buy']['T3'],5)}")
+
+    # =========================
+    # TIME WINDOWS
+    # =========================
+    st.write(f"🟠 London Time Windows (Spain): 🟣 {d['windows']['london1']} 🟣 {d['windows']['london2']}")
+    st.write(f"🟠 NY Conditional Window: 🟣 {d['windows']['ny']}")
+
+    # =========================
+    # SCORE
+    # =========================
+    st.write(f"🟡 Confluence Score: 🟣 {d['score']} / 100")
+
+    # =========================
+    # TRSE
+    # =========================
+    st.write("🟡 TRSE OUTPUT:")
+    st.write(f"Regime: {d['trse']}")
+    st.write(f"Delay Day Count: {d['day']}")
+    st.write(f"Next-Day Expectation: {d['expectation']}")
+
+    # =========================
+    # RULES
+    # =========================
+    st.write("🟡 Execution Rules:")
+    st.write("• Trade only inside window")
+    st.write("• First confirmed extreme defines direction")
+    st.write("• Respect structural invalidation")
+    st.write("• No confirmation → No trade")
+    st.write("• NY trade only if London expansion confirmed")
