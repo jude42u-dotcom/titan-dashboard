@@ -6,22 +6,13 @@ import pytz
 
 from titan_engine import run_engine
 
-# ============================
-# CONFIG
-# ============================
 SPAIN_TZ = pytz.timezone("Europe/Madrid")
 SAVE_FILE = "titan_output.json"
 
-# ============================
-# TIME CHECK
-# ============================
 def is_after_update_time():
     now = datetime.now(SPAIN_TZ)
     return now.hour > 10 or (now.hour == 10 and now.minute >= 50)
 
-# ============================
-# LOAD / SAVE
-# ============================
 def load_data():
     if os.path.exists(SAVE_FILE):
         with open(SAVE_FILE, "r") as f:
@@ -32,9 +23,6 @@ def save_data(data):
     with open(SAVE_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# ============================
-# UI
-# ============================
 st.set_page_config(page_title="TITAN Dashboard")
 st.title("🚀 TITAN Trading Dashboard")
 
@@ -43,13 +31,10 @@ st.write(f"🕒 Spain Time: {now}")
 
 data = load_data()
 
-# ============================
-# ENGINE EXECUTION
-# ============================
 if is_after_update_time():
 
     if data is None:
-        st.warning("⚙️ Running TITAN engine...")
+        st.warning("⚙️ Running FULL TITAN engine...")
 
         data = run_engine()
 
@@ -62,9 +47,6 @@ if is_after_update_time():
 else:
     st.info("⏳ Waiting for 10:50 Spain time")
 
-# ============================
-# DISPLAY
-# ============================
 if data and "ERROR" not in data:
 
     for pair in data:
