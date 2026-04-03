@@ -1,36 +1,19 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import json
 from datetime import datetime
 import pytz
 
-# =========================
+# ==============================
 # CONFIG
-# =========================
+# ==============================
 SPAIN_TZ = pytz.timezone("Europe/Madrid")
+SNAPSHOT_FILE = "titan_snapshot.json"
 
-# =========================
-# DEFAULT SAFE OUTPUT
-# =========================
-def default_output():
-    return {
-        "structure": "UNKNOWN",
-        "bias": "neutral",
-        "regime": "UNKNOWN",
-        "first_extreme": "UNKNOWN",
-        "score": 0,
-        "buy": 0,
-        "sell": 0,
-        "t1": 0,
-        "t2": 0,
-        "t3": 0,
-        "trse": "Unknown",
-        "delay": 0
-    }
-
-# =========================
+# ==============================
 # DATA FETCH
-# =========================
+# ==============================
 def get_ohlc(symbol):
     try:
         df = yf.download(
@@ -40,15 +23,20 @@ def get_ohlc(symbol):
             progress=False
         )
 
+        # Fallback if weak data
+        if df is None or df.empty or len(df) < 30:
+            df = yf.download(
+                symbol,
+                interval="1h",
+                period="5d",
+                progress=False
+            )
+
         if df is None or df.empty:
             return pd.DataFrame()
 
         df = df.dropna()
 
-        if len(df) < 50:
-            return pd.DataFrame()
-
-        # timezone fix
         if df.index.tz is None:
             df.index = df.index.tz_localize("UTC").tz_convert(SPAIN_TZ)
         else:
@@ -59,171 +47,152 @@ def get_ohlc(symbol):
     except:
         return pd.DataFrame()
 
-# =========================
-# SESSION SPLIT
-# =========================
-def get_sessions(df):
-    try:
-        if df is None or df.empty:
-            return None, None
-
-        df = df.copy()
-        df['hour'] = df.index.hour
-
-        asia = df[(df['hour'] >= 0) & (df['hour'] < 8)]
-        london = df[(df['hour'] >= 8) & (df['hour'] < 14)]
-
-        # fallback protection
-        if asia.empty:
-            asia = df.iloc[:20]
-
-        if london.empty:
-            london = df.iloc[-20:]
-
-        return asia, london
-
-    except:
-        return None, None
-
-# =========================
-# STRUCTURE
-# =========================
+# ==============================
+# STRUCTURE DETECTION (SAFE)
+# ==============================
 def detect_structure(df):
-    try:
-        highs = df['High'].tail(10)
-        lows = df['Low'].tail(10)
-
-        if len(highs) < 2 or len(lows) < 2:
-            return "UNKNOWN"
-
-        if highs.iloc[-1] > highs.iloc[0] and lows.iloc[-1] > lows.iloc[0]:
-            return "HLHL"
-
-        if highs.iloc[-1] < highs.iloc[0] and lows.iloc[-1] < lows.iloc[0]:
-            return "LFHL"
-
+    if df is None or len(df) < 20:
         return "UNKNOWN"
 
-    except:
-        return "UNKNOWN"
+    highs = df["High"]
+    lows = df["Low"]
 
-# =========================
-# REGIME
-# =========================
-def detect_regime(df):
     try:
-        rng = float(df['High'].max()) - float(df['Low'].min())
-
-        if rng > 0.005:
-            return "EXPANSION"
+        if highs.iloc[-1] > highs.iloc[-5] and lows.iloc[-1] > lows.iloc[-5]:
+            return "HHHL"
+        elif highs.iloc[-1] < highs.iloc[-5] and lows.iloc[-1] < lows.iloc[-5]:
+            return "LLLH"
         else:
-            return "COMPRESSION"
-
+            return "RANGE"
     except:
         return "UNKNOWN"
 
-# =========================
+# ==============================
 # ENGINE CORE
-# =========================
+# ==============================
 def run_pair(name, symbol):
     df = get_ohlc(symbol)
 
     if df.empty:
-        return default_output()
-
-    asia, london = get_sessions(df)
-
-    if asia is None or london is None:
-        return default_output()
+        return {
+            "structure": "UNKNOWN",
+            "bias": "neutral",
+            "regime": "UNKNOWN",
+            "first_extreme": "UNKNOWN",
+            "score": 0,
+            "buy": 0,
+            "sell": 0,
+            "t1": 0,
+            "t2": 0,
+            "t3": 0,
+            "trse": "Unknown",
+            "delay": 0
+        }
 
     structure = detect_structure(df)
-    regime = detect_regime(df)
 
-    try:
-        # 🔥 FORCE FLOAT (critical fix)
-        asia_low = float(asia['Low'].min())
-        asia_high = float(asia['High'].max())
+    last = float(df["Close"].iloc[-1])
+    high = float(df["High"].max())
+    low = float(df["Low"].min())
 
-        london_low = float(london['Low'].min())
-        london_high = float(london['High'].max())
+    rng = high - low
 
-        buy = asia_low
-        sell = asia_high
+    buy = round(low + rng * 0.25, 5)
+    sell = round(high - rng * 0.25, 5)
 
-        t1 = (asia_low + asia_high) / 2
-        t2 = london_low
-        t3 = london_high
+    t1 = round((buy + sell) / 2, 5)
+    t2 = round(t1 + (rng * 0.25), 5)
+    t3 = round(sell, 5)
 
-    except:
-        return default_output()
-
-    score = 70 if regime == "EXPANSION" else 60
+    bias = "bullish" if last > t1 else "bearish"
 
     return {
         "structure": structure,
-        "bias": "bearish" if structure == "LFHL" else (
-                 "bullish" if structure == "HLHL" else "neutral"
-        ),
-        "regime": regime,
+        "bias": bias,
+        "regime": "EXPANSION",
         "first_extreme": "London Sweep",
-        "score": score,
-        "buy": round(buy, 5),
-        "sell": round(sell, 5),
-        "t1": round(t1, 5),
-        "t2": round(t2, 5),
-        "t3": round(t3, 5),
+        "score": 70,
+        "buy": float(buy),
+        "sell": float(sell),
+        "t1": float(t1),
+        "t2": float(t2),
+        "t3": float(t3),
         "trse": "Rotation Day",
         "delay": 1
     }
 
-# =========================
+# ==============================
+# SNAPSHOT SYSTEM
+# ==============================
+def save_snapshot(data):
+    with open(SNAPSHOT_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+def load_snapshot():
+    try:
+        with open(SNAPSHOT_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return None
+
+def should_update():
+    now = datetime.now(SPAIN_TZ)
+    return now.hour == 22 and now.minute >= 50
+
+# ==============================
+# MAIN EXECUTION
+# ==============================
+snapshot = load_snapshot()
+
+if should_update() or snapshot is None:
+    eurusd = run_pair("EURUSD", "EURUSD=X")
+    gbpusd = run_pair("GBPUSD", "GBPUSD=X")
+
+    snapshot = {
+        "time": str(datetime.now(SPAIN_TZ)),
+        "EURUSD": eurusd,
+        "GBPUSD": gbpusd
+    }
+
+    save_snapshot(snapshot)
+
+data = snapshot
+
+# ==============================
 # UI
-# =========================
-st.set_page_config(page_title="TITAN PRO ENGINE", layout="wide")
+# ==============================
+st.set_page_config(page_title="TITAN PRO ENGINE", layout="centered")
 
 st.title("🚀 TITAN PRO ENGINE")
 
-now = datetime.now(SPAIN_TZ)
-st.write(f"Spain Time: `{now}`")
+st.markdown(f"**Spain Time:** `{data['time']}`")
 
-# =========================
-# PAIRS
-# =========================
-pairs = {
-    "EURUSD": "EURUSD=X",
-    "GBPUSD": "GBPUSD=X"
-}
+def display_pair(title, d):
+    st.header(title)
 
-# =========================
-# DISPLAY
-# =========================
-for name, symbol in pairs.items():
-    data = run_pair(name, symbol)
-
-    st.header(name)
-
-    st.write(f"Structure: {data['structure']}")
-    st.write(f"Bias: {data['bias']}")
-    st.write(f"Regime: {data['regime']}")
-    st.write(f"First Extreme: {data['first_extreme']}")
-    st.write(f"Score: {data['score']}")
+    st.write(f"Structure: {d['structure']}")
+    st.write(f"Bias: {d['bias']}")
+    st.write(f"Regime: {d['regime']}")
+    st.write(f"First Extreme: {d['first_extreme']}")
+    st.write(f"Score: {d['score']}")
 
     st.subheader("Zones")
-    st.write(f"Buy: {data['buy']}")
-    st.write(f"Sell: {data['sell']}")
+    st.write(f"Buy: {d['buy']}")
+    st.write(f"Sell: {d['sell']}")
 
     st.subheader("Targets")
-    st.write(f"T1: {data['t1']}")
-    st.write(f"T2: {data['t2']}")
-    st.write(f"T3: {data['t3']}")
+    st.write(f"T1: {d['t1']}")
+    st.write(f"T2: {d['t2']}")
+    st.write(f"T3: {d['t3']}")
 
     st.subheader("TRSE")
-    st.write(data["trse"])
-    st.write(f"Delay: {data['delay']}")
+    st.write(d["trse"])
+    st.write(f"Delay: {d['delay']}")
 
     st.subheader("Time Windows")
     st.write("London 1: 08:30–10:00")
     st.write("London 2: 11:30–13:00")
     st.write("NY: 14:30–16:30")
 
-    st.markdown("---")
+display_pair("EURUSD", data["EURUSD"])
+display_pair("GBPUSD", data["GBPUSD"])
