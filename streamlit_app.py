@@ -1,46 +1,31 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
-import json
-import os
-from datetime import datetime, time
+from datetime import datetime
 import pytz
 
 # =========================
-# CONFIG
+# TIME (SPAIN)
 # =========================
-SPAIN_TZ = pytz.timezone("Europe/Madrid")
-SNAPSHOT_FILE = "titan_snapshot.json"
-UPDATE_HOUR = 22
-UPDATE_MINUTE = 50
+def get_spain_time():
+    tz = pytz.timezone("Europe/Madrid")
+    return datetime.now(tz)
 
 # =========================
-# TIME
+# DATA (STOOQ - RELIABLE)
 # =========================
-def spain_now():
-    return datetime.now(SPAIN_TZ)
-
-# =========================
-# SAFE DATA FETCH (DAILY ONLY)
-# =========================
-def get_ohlc(symbol):
+def get_data(symbol):
     try:
-        df = yf.download(
-            symbol,
-            interval="1d",
-            period="10d",
-            progress=False
-        )
+        mapping = {
+            "EURUSD": "eurusd",
+            "GBPUSD": "gbpusd"
+        }
 
-        if df is None or df.empty:
-            return pd.DataFrame()
+        url = f"https://stooq.com/q/d/l/?s={mapping[symbol]}&i=d"
+        df = pd.read_csv(url)
 
-        df = df.dropna()
-
-        for col in ["Open", "High", "Low", "Close"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        df = df.dropna()
+        df.columns = [c.capitalize() for c in df.columns]
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.sort_values("Date")
 
         return df
 
@@ -48,166 +33,128 @@ def get_ohlc(symbol):
         return pd.DataFrame()
 
 # =========================
-# STRUCTURE ENGINE
+# TITAN ENGINE (SIMPLIFIED CORE)
 # =========================
-def detect_structure(df):
-    if df is None or df.empty or len(df) < 3:
-        return "UNKNOWN"
+def run_pair(symbol):
+    df = get_data(symbol)
 
-    highs = df["High"].tail(3).values
-    lows = df["Low"].tail(3).values
-
-    if highs[-1] > highs[-2] > highs[-3]:
-        return "UPTREND"
-    elif lows[-1] < lows[-2] < lows[-3]:
-        return "DOWNTREND"
-    else:
-        return "RANGE"
-
-# =========================
-# SAFE FLOAT
-# =========================
-def f(x):
-    try:
-        return float(x)
-    except:
-        return 0.0
-
-# =========================
-# CORE ENGINE
-# =========================
-def run_pair(name, symbol):
-    df = get_ohlc(symbol)
-
-    if df.empty:
+    if df.empty or len(df) < 10:
         return {
-            "pair": name,
-            "structure": "UNKNOWN",
-            "bias": "neutral",
-            "regime": "UNKNOWN",
-            "first_extreme": "UNKNOWN",
+            "structure": "NO DATA",
+            "bias": "N/A",
+            "regime": "N/A",
+            "first_extreme": "N/A",
             "score": 0,
             "buy": 0,
             "sell": 0,
             "t1": 0,
             "t2": 0,
-            "t3": 0,
-            "trse": "Unknown",
-            "delay": 0
+            "t3": 0
         }
 
-    last = f(df["Close"].iloc[-1])
-    high = f(df["High"].iloc[-1])
-    low = f(df["Low"].iloc[-1])
+    last = float(df["Close"].iloc[-1])
+    prev = float(df["Close"].iloc[-2])
 
-    structure = detect_structure(df)
+    # Simple structure logic (placeholder until full TITAN engine)
+    if last > prev:
+        structure = "UPTREND"
+        bias = "BUY"
+    elif last < prev:
+        structure = "DOWNTREND"
+        bias = "SELL"
+    else:
+        structure = "RANGE"
+        bias = "NEUTRAL"
 
-    bias = "neutral"
-    if structure == "UPTREND":
-        bias = "bullish"
-    elif structure == "DOWNTREND":
-        bias = "bearish"
+    # Basic zones & targets (temporary stable logic)
+    buy = round(last * 0.995, 5)
+    sell = round(last * 1.005, 5)
 
-    rng = high - low
+    t1 = round(last * 1.002, 5)
+    t2 = round(last * 1.004, 5)
+    t3 = round(last * 1.006, 5)
 
-    buy = low + 0.3 * rng
-    sell = high - 0.3 * rng
+    score = 60 if bias != "NEUTRAL" else 30
 
     return {
-        "pair": name,
         "structure": structure,
         "bias": bias,
         "regime": "ACTIVE",
-        "first_extreme": "Daily Range",
-        "score": 60 if structure != "UNKNOWN" else 0,
-        "buy": f(buy),
-        "sell": f(sell),
-        "t1": f(last + rng * 0.5),
-        "t2": f(last + rng * 1.0),
-        "t3": f(last + rng * 1.5),
-        "trse": "Rotation Day",
-        "delay": 1
+        "first_extreme": "Computed",
+        "score": score,
+        "buy": buy,
+        "sell": sell,
+        "t1": t1,
+        "t2": t2,
+        "t3": t3
     }
-
-# =========================
-# SNAPSHOT LOGIC
-# =========================
-def should_update():
-    now = spain_now()
-    update_time = now.replace(hour=UPDATE_HOUR, minute=UPDATE_MINUTE, second=0, microsecond=0)
-    return now >= update_time
-
-def load_snapshot():
-    if os.path.exists(SNAPSHOT_FILE):
-        with open(SNAPSHOT_FILE, "r") as f:
-            return json.load(f)
-    return None
-
-def save_snapshot(data):
-    with open(SNAPSHOT_FILE, "w") as f:
-        json.dump(data, f)
-
-def build_snapshot():
-    eurusd = run_pair("EURUSD", "EURUSD=X")
-    gbpusd = run_pair("GBPUSD", "GBPUSD=X")
-
-    snapshot = {
-        "time": str(spain_now()),
-        "EURUSD": eurusd,
-        "GBPUSD": gbpusd
-    }
-
-    save_snapshot(snapshot)
-    return snapshot
-
-def get_data():
-    snapshot = load_snapshot()
-
-    if snapshot is None:
-        return build_snapshot()
-
-    if should_update():
-        return build_snapshot()
-
-    return snapshot
 
 # =========================
 # UI
 # =========================
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="TITAN PRO ENGINE", layout="centered")
 
 st.title("🚀 TITAN PRO ENGINE")
-st.caption(f"Spain Time: {spain_now()}")
 
-data = get_data()
+spain_time = get_spain_time()
+st.write(f"Spain Time: {spain_time}")
 
-def display(pair):
-    st.header(pair["pair"])
+# =========================
+# EURUSD
+# =========================
+st.header("EURUSD")
+eur = run_pair("EURUSD")
 
-    st.write(f"Structure: {pair['structure']}")
-    st.write(f"Bias: {pair['bias']}")
-    st.write(f"Regime: {pair['regime']}")
-    st.write(f"First Extreme: {pair['first_extreme']}")
-    st.write(f"Score: {pair['score']}")
+st.write(f"Structure: {eur['structure']}")
+st.write(f"Bias: {eur['bias']}")
+st.write(f"Regime: {eur['regime']}")
+st.write(f"First Extreme: {eur['first_extreme']}")
+st.write(f"Score: {eur['score']}")
 
-    st.subheader("Zones")
-    st.write(f"Buy: {round(pair['buy'],5)}")
-    st.write(f"Sell: {round(pair['sell'],5)}")
+st.subheader("Zones")
+st.write(f"Buy: {eur['buy']}")
+st.write(f"Sell: {eur['sell']}")
 
-    st.subheader("Targets")
-    st.write(f"T1: {round(pair['t1'],5)}")
-    st.write(f"T2: {round(pair['t2'],5)}")
-    st.write(f"T3: {round(pair['t3'],5)}")
+st.subheader("Targets")
+st.write(f"T1: {eur['t1']}")
+st.write(f"T2: {eur['t2']}")
+st.write(f"T3: {eur['t3']}")
 
-    st.subheader("TRSE")
-    st.write(pair["trse"])
-    st.write(f"Delay: {pair['delay']}")
+st.subheader("TRSE")
+st.write("Rotation Day")
+st.write("Delay: 1")
 
-    st.subheader("Time Windows")
-    st.write("London 1: 08:30–10:00")
-    st.write("London 2: 11:30–13:00")
-    st.write("NY: 14:30–16:30")
+st.subheader("Time Windows")
+st.write("London 1: 08:30–10:00")
+st.write("London 2: 11:30–13:00")
+st.write("NY: 14:30–16:30")
 
-display(data["EURUSD"])
-st.divider()
-display(data["GBPUSD"])
+# =========================
+# GBPUSD
+# =========================
+st.header("GBPUSD")
+gbp = run_pair("GBPUSD")
+
+st.write(f"Structure: {gbp['structure']}")
+st.write(f"Bias: {gbp['bias']}")
+st.write(f"Regime: {gbp['regime']}")
+st.write(f"First Extreme: {gbp['first_extreme']}")
+st.write(f"Score: {gbp['score']}")
+
+st.subheader("Zones")
+st.write(f"Buy: {gbp['buy']}")
+st.write(f"Sell: {gbp['sell']}")
+
+st.subheader("Targets")
+st.write(f"T1: {gbp['t1']}")
+st.write(f"T2: {gbp['t2']}")
+st.write(f"T3: {gbp['t3']}")
+
+st.subheader("TRSE")
+st.write("Rotation Day")
+st.write("Delay: 1")
+
+st.subheader("Time Windows")
+st.write("London 1: 08:30–10:00")
+st.write("London 2: 11:30–13:00")
+st.write("NY: 14:30–16:30")
