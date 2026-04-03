@@ -1,114 +1,86 @@
 import streamlit as st
-import requests
-import pandas as pd
 import json
 import os
 from datetime import datetime
 import pytz
 
-# IMPORT TITAN CORE
-from titan_engine import run_titan_full
+# IMPORT TITAN ENGINE (CORRECT)
+from titan_engine import run_engine
 
-# ==========================================
+# ============================
 # CONFIG
-# ==========================================
-API_KEY = "e7636f5efb884afc9f706a6834e716f6"
-BASE_URL = "https://api.twelvedata.com/time_series"
+# ============================
 SPAIN_TZ = pytz.timezone("Europe/Madrid")
 SAVE_FILE = "titan_output.json"
 
-# ==========================================
-# DATA ENGINE
-# ==========================================
-def fetch(symbol, interval, output):
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "outputsize": output,
-        "apikey": API_KEY
-    }
-
-    r = requests.get(BASE_URL, params=params).json()
-
-    if "values" not in r:
-        return None
-
-    df = pd.DataFrame(r["values"]).astype(float)
-    return df.iloc[::-1]
-
-
-def get_data(pair):
-    return {
-        "w": fetch(pair, "1week", 5),
-        "d": fetch(pair, "1day", 9),
-        "h1": fetch(pair, "1h", 24),
-        "m1": fetch(pair, "1min", 1440)
-    }
-
-# ==========================================
-# LOCK SYSTEM (10:50 SPAIN)
-# ==========================================
-def should_run():
+# ============================
+# TIME CHECK
+# ============================
+def is_after_update_time():
     now = datetime.now(SPAIN_TZ)
-    return now.hour == 22 and now.minute >= 50
+    return now.hour > 10 or (now.hour == 10 and now.minute >= 50)
 
+# ============================
+# LOAD / SAVE OUTPUT
+# ============================
+def load_saved_output():
+    if os.path.exists(SAVE_FILE):
+        with open(SAVE_FILE, "r") as f:
+            return json.load(f)
+    return None
 
-def save(data):
+def save_output(data):
     with open(SAVE_FILE, "w") as f:
-        json.dump(data, f)
+        json.dump(data, f, indent=4)
 
+# ============================
+# MAIN LOGIC
+# ============================
+st.set_page_config(page_title="TITAN Dashboard", layout="wide")
 
-def load():
-    if not os.path.exists(SAVE_FILE):
-        return None
-    with open(SAVE_FILE, "r") as f:
-        return json.load(f)
+st.title("🚀 TITAN Trading Dashboard")
 
-# ==========================================
-# RUN TITAN (ONCE PER DAY)
-# ==========================================
-if should_run():
-    result = {
-        "EURUSD": run_titan_full(get_data("EUR/USD")),
-        "GBPUSD": run_titan_full(get_data("GBP/USD")),
-        "timestamp": str(datetime.now(SPAIN_TZ))
-    }
-    save(result)
+now = datetime.now(SPAIN_TZ)
+st.write(f"🕒 Spain Time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-data = load()
+data = load_saved_output()
 
-# ==========================================
-# UI
-# ==========================================
-st.set_page_config(layout="wide")
-st.title("🔱 TITAN ENGINE — FULL SYSTEM")
-
-if data is None:
-    st.warning("⏳ Waiting for 22:50 Spain execution...")
+# RUN ENGINE ONLY ONCE AFTER 10:50
+if is_after_update_time():
+    if data is None:
+        st.warning("⚙️ Running TITAN engine (daily update)...")
+        data = run_engine()
+        save_output(data)
 else:
-    tabs = st.tabs(["EURUSD", "GBPUSD"])
+    st.info("⏳ Waiting for 10:50 Spain time update...")
 
-    for i, pair in enumerate(["EURUSD", "GBPUSD"]):
-        with tabs[i]:
-            d = data[pair]
+# ============================
+# DISPLAY OUTPUT
+# ============================
+if data:
+    for pair in data:
+        st.header(pair)
 
-            if d:
-                st.header(pair)
+        d = data[pair]
 
-                st.write("🧠 Regime:", d["regime"])
-                st.write("🔁 TRSE:", d["trse"], "| Delay:", d["delay"])
+        st.write(f"**Macro Bias:** {d.get('macro_bias', '-')}")
+        st.write(f"**Regime:** {d.get('regime', '-')}")
+        st.write(f"**Confluence Score:** {d.get('score', '-')}")
 
-                st.write("💰 Price:", d["price"])
+        st.write("### Zones")
+        st.write(f"Buy Zone: {d.get('buy_zone', '-')}")
+        st.write(f"Sell Zone: {d.get('sell_zone', '-')}")
 
-                st.write("🟢 Buy Zone:", d["buy_zone"])
-                st.write("🔴 Sell Zone:", d["sell_zone"])
+        st.write("### Targets")
+        st.write(f"T1: {d.get('t1', '-')}")
+        st.write(f"T2: {d.get('t2', '-')}")
+        st.write(f"T3: {d.get('t3', '-')}")
 
-                st.write("⛔ Invalidation Up:", d["inv_up"])
-                st.write("⛔ Invalidation Down:", d["inv_down"])
+        st.write("### Invalidation")
+        st.write(f"Up: {d.get('invalid_up', '-')}")
+        st.write(f"Down: {d.get('invalid_down', '-')}")
 
-                st.write("🎯 Targets:", d["targets"])
+        st.markdown("---")
 
-                st.write("🕒 London Windows:", d["london"])
-                st.write("🕒 NY Window:", d["ny"])
-
-                st.write("📊 Confluence Score:", d["score"])
+else:
+    st.warning("No data yet. Waiting for first run.")
