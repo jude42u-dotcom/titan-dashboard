@@ -1,56 +1,98 @@
-import requests
+import streamlit as st
+import json
+import os
+from datetime import datetime
+import pytz
 
-API_KEY = "e7636f5efb884afc9f706a6834e716f6"
-BASE_URL = "https://api.twelvedata.com/time_series"
-
-# ============================
-# FETCH DATA
-# ============================
-def fetch_data(symbol, interval, outputsize=100):
-    url = f"{BASE_URL}?symbol={symbol}&interval={interval}&outputsize={outputsize}&apikey={API_KEY}"
-    response = requests.get(url).json()
-
-    if "values" not in response:
-        raise Exception(f"API error for {symbol}")
-
-    return response["values"]
+from titan_engine import run_engine
 
 # ============================
-# CORE ENGINE
+# CONFIG
 # ============================
-def run_engine():
-    
-    # FETCH DATA (AUTO)
-    eurusd_m1 = fetch_data("EUR/USD", "1min", 100)
-    gbpusd_m1 = fetch_data("GBP/USD", "1min", 100)
+SPAIN_TZ = pytz.timezone("Europe/Madrid")
+SAVE_FILE = "titan_output.json"
 
-    # SIMPLE PLACEHOLDER LOGIC (we upgrade later)
-    eur_price = float(eurusd_m1[0]["close"])
-    gbp_price = float(gbpusd_m1[0]["close"])
+# ============================
+# TIME CHECK
+# ============================
+def is_after_update_time():
+    now = datetime.now(SPAIN_TZ)
+    return now.hour > 10 or (now.hour == 10 and now.minute >= 50)
 
-    return {
-        "EURUSD": {
-            "macro_bias": "BUY" if eur_price > 1.05 else "SELL",
-            "regime": "Expansion",
-            "score": 75,
-            "buy_zone": eur_price - 0.002,
-            "sell_zone": eur_price + 0.002,
-            "t1": eur_price + 0.003,
-            "t2": eur_price + 0.006,
-            "t3": eur_price + 0.010,
-            "invalid_up": eur_price + 0.015,
-            "invalid_down": eur_price - 0.015
-        },
-        "GBPUSD": {
-            "macro_bias": "BUY" if gbp_price > 1.20 else "SELL",
-            "regime": "Expansion",
-            "score": 78,
-            "buy_zone": gbp_price - 0.002,
-            "sell_zone": gbp_price + 0.002,
-            "t1": gbp_price + 0.003,
-            "t2": gbp_price + 0.006,
-            "t3": gbp_price + 0.010,
-            "invalid_up": gbp_price + 0.015,
-            "invalid_down": gbp_price - 0.015
-        }
-    }
+# ============================
+# LOAD / SAVE
+# ============================
+def load_data():
+    if os.path.exists(SAVE_FILE):
+        with open(SAVE_FILE, "r") as f:
+            return json.load(f)
+    return None
+
+def save_data(data):
+    with open(SAVE_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+# ============================
+# UI
+# ============================
+st.set_page_config(page_title="TITAN Dashboard")
+st.title("🚀 TITAN Trading Dashboard")
+
+now = datetime.now(SPAIN_TZ)
+st.write(f"🕒 Spain Time: {now}")
+
+data = load_data()
+
+# ============================
+# ENGINE EXECUTION
+# ============================
+if is_after_update_time():
+
+    if data is None:
+        st.warning("⚙️ Running TITAN engine...")
+
+        data = run_engine()
+
+        if "ERROR" in data:
+            st.error(data["ERROR"])
+        else:
+            save_data(data)
+            st.success("✅ TITAN updated")
+
+else:
+    st.info("⏳ Waiting for 10:50 Spain time")
+
+# ============================
+# DISPLAY
+# ============================
+if data and "ERROR" not in data:
+
+    for pair in data:
+        st.header(pair)
+
+        d = data[pair]
+
+        st.write(f"**Bias:** {d['macro_bias']}")
+        st.write(f"**Regime:** {d['regime']}")
+        st.write(f"**Score:** {d['score']}")
+
+        st.write("### Zones")
+        st.write(f"Buy: {d['buy_zone']}")
+        st.write(f"Sell: {d['sell_zone']}")
+
+        st.write("### Targets")
+        st.write(f"T1: {d['t1']}")
+        st.write(f"T2: {d['t2']}")
+        st.write(f"T3: {d['t3']}")
+
+        st.write("### Invalidation")
+        st.write(f"Up: {d['invalid_up']}")
+        st.write(f"Down: {d['invalid_down']}")
+
+        st.markdown("---")
+
+elif data and "ERROR" in data:
+    st.error(data["ERROR"])
+
+else:
+    st.warning("No data yet.")
