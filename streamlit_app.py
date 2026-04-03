@@ -2,214 +2,212 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import json
-from datetime import datetime
+import os
+from datetime import datetime, time
 import pytz
 
-# ==============================
+# =========================
 # CONFIG
-# ==============================
+# =========================
 SPAIN_TZ = pytz.timezone("Europe/Madrid")
 SNAPSHOT_FILE = "titan_snapshot.json"
+UPDATE_HOUR = 22
+UPDATE_MINUTE = 50
 
-# ==============================
-# DATA FETCH (SAFE)
-# ==============================
+# =========================
+# TIME
+# =========================
+def spain_now():
+    return datetime.now(SPAIN_TZ)
+
+# =========================
+# SAFE DATA FETCH (DAILY ONLY)
+# =========================
 def get_ohlc(symbol):
     try:
         df = yf.download(
             symbol,
-            interval="15m",
-            period="5d",
+            interval="1d",
+            period="10d",
             progress=False
         )
-
-        # fallback to 1H if weak
-        if df is None or df.empty or len(df) < 30:
-            df = yf.download(
-                symbol,
-                interval="1h",
-                period="5d",
-                progress=False
-            )
 
         if df is None or df.empty:
             return pd.DataFrame()
 
         df = df.dropna()
 
-        # 🔥 FORCE NUMERIC (CRITICAL FIX)
         for col in ["Open", "High", "Low", "Close"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
         df = df.dropna()
-
-        # timezone fix
-        if df.index.tz is None:
-            df.index = df.index.tz_localize("UTC").tz_convert(SPAIN_TZ)
-        else:
-            df.index = df.index.tz_convert(SPAIN_TZ)
 
         return df
 
     except:
         return pd.DataFrame()
 
-# ==============================
-# STRUCTURE DETECTION
-# ==============================
+# =========================
+# STRUCTURE ENGINE
+# =========================
 def detect_structure(df):
-    if df is None or len(df) < 20:
+    if df is None or df.empty or len(df) < 3:
         return "UNKNOWN"
 
-    highs = df["High"]
-    lows = df["Low"]
+    highs = df["High"].tail(3).values
+    lows = df["Low"].tail(3).values
 
+    if highs[-1] > highs[-2] > highs[-3]:
+        return "UPTREND"
+    elif lows[-1] < lows[-2] < lows[-3]:
+        return "DOWNTREND"
+    else:
+        return "RANGE"
+
+# =========================
+# SAFE FLOAT
+# =========================
+def f(x):
     try:
-        if highs.iloc[-1] > highs.iloc[-5] and lows.iloc[-1] > lows.iloc[-5]:
-            return "HHHL"
-        elif highs.iloc[-1] < highs.iloc[-5] and lows.iloc[-1] < lows.iloc[-5]:
-            return "LLLH"
-        else:
-            return "RANGE"
+        return float(x)
     except:
-        return "UNKNOWN"
+        return 0.0
 
-# ==============================
-# ENGINE CORE (FULLY SAFE)
-# ==============================
+# =========================
+# CORE ENGINE
+# =========================
 def run_pair(name, symbol):
     df = get_ohlc(symbol)
 
     if df.empty:
-        return default_output()
-
-    try:
-        structure = detect_structure(df)
-
-        last = float(df["Close"].iloc[-1])
-        high = float(df["High"].max())
-        low = float(df["Low"].min())
-
-        rng = high - low
-
-        buy = round(low + rng * 0.25, 5)
-        sell = round(high - rng * 0.25, 5)
-
-        t1 = round((buy + sell) / 2, 5)
-        t2 = round(t1 + (rng * 0.25), 5)
-        t3 = round(sell, 5)
-
-        bias = "bullish" if last > t1 else "bearish"
-
         return {
-            "structure": structure,
-            "bias": bias,
-            "regime": "EXPANSION",
-            "first_extreme": "London Sweep",
-            "score": 70,
-            "buy": buy,
-            "sell": sell,
-            "t1": t1,
-            "t2": t2,
-            "t3": t3,
-            "trse": "Rotation Day",
-            "delay": 1
+            "pair": name,
+            "structure": "UNKNOWN",
+            "bias": "neutral",
+            "regime": "UNKNOWN",
+            "first_extreme": "UNKNOWN",
+            "score": 0,
+            "buy": 0,
+            "sell": 0,
+            "t1": 0,
+            "t2": 0,
+            "t3": 0,
+            "trse": "Unknown",
+            "delay": 0
         }
 
-    except:
-        return default_output()
+    last = f(df["Close"].iloc[-1])
+    high = f(df["High"].iloc[-1])
+    low = f(df["Low"].iloc[-1])
 
-# ==============================
-# DEFAULT OUTPUT (SAFE FALLBACK)
-# ==============================
-def default_output():
+    structure = detect_structure(df)
+
+    bias = "neutral"
+    if structure == "UPTREND":
+        bias = "bullish"
+    elif structure == "DOWNTREND":
+        bias = "bearish"
+
+    rng = high - low
+
+    buy = low + 0.3 * rng
+    sell = high - 0.3 * rng
+
     return {
-        "structure": "UNKNOWN",
-        "bias": "neutral",
-        "regime": "UNKNOWN",
-        "first_extreme": "UNKNOWN",
-        "score": 0,
-        "buy": 0,
-        "sell": 0,
-        "t1": 0,
-        "t2": 0,
-        "t3": 0,
-        "trse": "Unknown",
-        "delay": 0
+        "pair": name,
+        "structure": structure,
+        "bias": bias,
+        "regime": "ACTIVE",
+        "first_extreme": "Daily Range",
+        "score": 60 if structure != "UNKNOWN" else 0,
+        "buy": f(buy),
+        "sell": f(sell),
+        "t1": f(last + rng * 0.5),
+        "t2": f(last + rng * 1.0),
+        "t3": f(last + rng * 1.5),
+        "trse": "Rotation Day",
+        "delay": 1
     }
 
-# ==============================
-# SNAPSHOT SYSTEM
-# ==============================
-def save_snapshot(data):
-    with open(SNAPSHOT_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+# =========================
+# SNAPSHOT LOGIC
+# =========================
+def should_update():
+    now = spain_now()
+    update_time = now.replace(hour=UPDATE_HOUR, minute=UPDATE_MINUTE, second=0, microsecond=0)
+    return now >= update_time
 
 def load_snapshot():
-    try:
+    if os.path.exists(SNAPSHOT_FILE):
         with open(SNAPSHOT_FILE, "r") as f:
             return json.load(f)
-    except:
-        return None
+    return None
 
-def should_update():
-    now = datetime.now(SPAIN_TZ)
-    return now.hour == 22 and now.minute >= 50
+def save_snapshot(data):
+    with open(SNAPSHOT_FILE, "w") as f:
+        json.dump(data, f)
 
-# ==============================
-# MAIN EXECUTION
-# ==============================
-snapshot = load_snapshot()
-
-if should_update() or snapshot is None:
+def build_snapshot():
     eurusd = run_pair("EURUSD", "EURUSD=X")
     gbpusd = run_pair("GBPUSD", "GBPUSD=X")
 
     snapshot = {
-        "time": str(datetime.now(SPAIN_TZ)),
+        "time": str(spain_now()),
         "EURUSD": eurusd,
         "GBPUSD": gbpusd
     }
 
     save_snapshot(snapshot)
+    return snapshot
 
-data = snapshot
+def get_data():
+    snapshot = load_snapshot()
 
-# ==============================
+    if snapshot is None:
+        return build_snapshot()
+
+    if should_update():
+        return build_snapshot()
+
+    return snapshot
+
+# =========================
 # UI
-# ==============================
-st.set_page_config(page_title="TITAN PRO ENGINE", layout="centered")
+# =========================
+st.set_page_config(layout="wide")
 
 st.title("🚀 TITAN PRO ENGINE")
+st.caption(f"Spain Time: {spain_now()}")
 
-st.markdown(f"**Spain Time:** `{data['time']}`")
+data = get_data()
 
-def display_pair(title, d):
-    st.header(title)
+def display(pair):
+    st.header(pair["pair"])
 
-    st.write(f"Structure: {d['structure']}")
-    st.write(f"Bias: {d['bias']}")
-    st.write(f"Regime: {d['regime']}")
-    st.write(f"First Extreme: {d['first_extreme']}")
-    st.write(f"Score: {d['score']}")
+    st.write(f"Structure: {pair['structure']}")
+    st.write(f"Bias: {pair['bias']}")
+    st.write(f"Regime: {pair['regime']}")
+    st.write(f"First Extreme: {pair['first_extreme']}")
+    st.write(f"Score: {pair['score']}")
 
     st.subheader("Zones")
-    st.write(f"Buy: {d['buy']}")
-    st.write(f"Sell: {d['sell']}")
+    st.write(f"Buy: {round(pair['buy'],5)}")
+    st.write(f"Sell: {round(pair['sell'],5)}")
 
     st.subheader("Targets")
-    st.write(f"T1: {d['t1']}")
-    st.write(f"T2: {d['t2']}")
-    st.write(f"T3: {d['t3']}")
+    st.write(f"T1: {round(pair['t1'],5)}")
+    st.write(f"T2: {round(pair['t2'],5)}")
+    st.write(f"T3: {round(pair['t3'],5)}")
 
     st.subheader("TRSE")
-    st.write(d["trse"])
-    st.write(f"Delay: {d['delay']}")
+    st.write(pair["trse"])
+    st.write(f"Delay: {pair['delay']}")
 
     st.subheader("Time Windows")
     st.write("London 1: 08:30–10:00")
     st.write("London 2: 11:30–13:00")
     st.write("NY: 14:30–16:30")
 
-display_pair("EURUSD", data["EURUSD"])
-display_pair("GBPUSD", data["GBPUSD"])
+display(data["EURUSD"])
+st.divider()
+display(data["GBPUSD"])
