@@ -2,183 +2,211 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
+import pytz
 
-# =========================
-# DATA ENGINE (FIXED)
-# =========================
+# -----------------------------
+# TIME
+# -----------------------------
+def get_spain_time():
+    tz = pytz.timezone("Europe/Madrid")
+    return datetime.now(tz)
+
+# -----------------------------
+# DATA FETCH
+# -----------------------------
 def get_ohlc(symbol):
     try:
-        df = yf.download(symbol, period="5d", interval="1h", progress=False)
-
-        if df is None or df.empty:
-            return None
-
-        # Flatten MultiIndex if exists
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        # Normalize columns
-        df.columns = [c.lower() for c in df.columns]
-
-        required = ["open", "high", "low", "close"]
-        if not all(col in df.columns for col in required):
-            return None
-
-        df = df[required].astype(float).dropna()
-
-        if df.empty:
-            return None
-
+        df = yf.download(symbol, interval="15m", period="2d", progress=False)
+        df.dropna(inplace=True)
         return df
-
     except:
-        return None
+        return pd.DataFrame()
 
+# -----------------------------
+# SESSION ENGINE
+# -----------------------------
+def get_sessions(df):
+    if df.empty:
+        return None, None
 
-# =========================
-# STRUCTURE ENGINE
-# =========================
+    df = df.copy()
+    df['hour'] = df.index.hour
+
+    asia = df[(df['hour'] >= 0) & (df['hour'] < 7)]
+    london = df[(df['hour'] >= 7) & (df['hour'] < 13)]
+
+    return asia, london
+
+# -----------------------------
+# STRUCTURE
+# -----------------------------
 def detect_structure(df):
-    highs = df["high"].tail(5).values
-    lows = df["low"].tail(5).values
+    if len(df) < 10:
+        return "UNKNOWN"
 
-    if highs[-1] < highs[-2] and lows[-1] < lows[-2]:
-        return "LFHL", "bearish"
-    elif highs[-1] > highs[-2] and lows[-1] > lows[-2]:
-        return "HFHL", "bullish"
+    highs = df['High'].tail(5)
+    lows = df['Low'].tail(5)
+
+    if highs.iloc[-1] < highs.iloc[0] and lows.iloc[-1] < lows.iloc[0]:
+        return "LFHL"
+    elif highs.iloc[-1] > highs.iloc[0] and lows.iloc[-1] > lows.iloc[0]:
+        return "HLHL"
     else:
-        return "RANGE", "neutral"
+        return "MIXED"
 
+# -----------------------------
+# FIRST EXTREME
+# -----------------------------
+def detect_first_extreme(df):
+    if len(df) < 20:
+        return "UNKNOWN"
 
-# =========================
-# REGIME ENGINE
-# =========================
+    early = df.iloc[:20]
+
+    high_time = early['High'].idxmax()
+    low_time = early['Low'].idxmin()
+
+    if high_time < low_time:
+        return "HFL"  # High First
+    else:
+        return "LFHL" # Low First
+
+# -----------------------------
+# REGIME
+# -----------------------------
 def detect_regime(df):
-    rng = df["high"].max() - df["low"].min()
+    rng = df['High'].max() - df['Low'].min()
 
-    if rng > 0.010:
-        return "EXPANSION", 70
+    if rng > 0.005:
+        return "EXPANSION"
     else:
-        return "COMPRESSION", 60
+        return "COMPRESSION"
 
+# -----------------------------
+# SMART ZONES
+# -----------------------------
+def compute_zones(df):
+    asia, london = get_sessions(df)
 
-# =========================
-# LEVEL ENGINE
-# =========================
-def compute_levels(df):
-    try:
-        high = df["high"].max()
-        low = df["low"].min()
+    if asia is None or london is None or asia.empty or london.empty:
+        return 0, 0
 
-        if high == 0 or low == 0:
-            return None
+    asia_low = asia['Low'].min()
+    asia_high = asia['High'].max()
 
-        mid = (high + low) / 2
+    london_high = london['High'].max()
+    london_low = london['Low'].min()
 
-        return {
-            "buy": round(low, 5),
-            "sell": round(high, 5),
-            "t1": round(mid, 5),
-            "t2": round(mid + (high - mid) * 0.5, 5),
-            "t3": round(high, 5)
-        }
+    # Smart zones (not full range)
+    buy_zone = asia_low
+    sell_zone = london_high
 
-    except:
-        return None
+    return buy_zone, sell_zone
 
+# -----------------------------
+# TARGETS
+# -----------------------------
+def compute_targets(buy, sell):
+    if buy == 0 or sell == 0:
+        return 0, 0, 0
 
-# =========================
-# TRSE ENGINE
-# =========================
-def compute_trse(df):
-    closes = df["close"].tail(3).values
+    mid = (buy + sell) / 2
 
-    if len(closes) < 3:
-        return "Unknown", 0
+    t1 = mid
+    t2 = sell - (sell - buy) * 0.25
+    t3 = sell
 
-    if closes[-1] > closes[-2] > closes[-3]:
-        return "Trend Day", 2
-    elif closes[-1] < closes[-2] < closes[-3]:
-        return "Trend Day", 2
-    else:
-        return "Rotation Day", 1
+    return round(t1, 5), round(t2, 5), round(t3, 5)
 
+# -----------------------------
+# SCORING ENGINE
+# -----------------------------
+def compute_score(structure, regime, extreme):
+    score = 0
 
-# =========================
-# RUN ENGINE
-# =========================
+    if structure == "LFHL":
+        score += 25
+
+    if regime == "EXPANSION":
+        score += 25
+
+    if extreme == "HFL":
+        score += 25
+
+    # Always add base confidence
+    score += 20
+
+    return min(score, 100)
+
+# -----------------------------
+# RUN PAIR
+# -----------------------------
 def run_pair(name, symbol):
     df = get_ohlc(symbol)
 
-    if df is None:
+    if df.empty:
         return None
 
-    structure, bias = detect_structure(df)
-    regime, score = detect_regime(df)
-    levels = compute_levels(df)
-    trse, delay = compute_trse(df)
+    structure = detect_structure(df)
+    regime = detect_regime(df)
+    extreme = detect_first_extreme(df)
+
+    buy, sell = compute_zones(df)
+    t1, t2, t3 = compute_targets(buy, sell)
+
+    score = compute_score(structure, regime, extreme)
 
     return {
         "pair": name,
         "structure": structure,
-        "bias": bias,
+        "bias": "bearish" if structure == "LFHL" else "bullish",
         "regime": regime,
+        "extreme": extreme,
         "score": score,
-        "levels": levels,
-        "trse": trse,
-        "delay": delay
+        "buy": round(buy, 5),
+        "sell": round(sell, 5),
+        "t1": t1,
+        "t2": t2,
+        "t3": t3
     }
 
+# -----------------------------
+# UI
+# -----------------------------
+st.set_page_config(layout="wide")
 
-# =========================
-# DISPLAY ENGINE
-# =========================
-def display(pair):
-    if pair is None:
-        st.error("Data not available")
-        return
+st.title("🚀 TITAN PRO ENGINE")
 
-    st.header(pair["pair"])
+now = get_spain_time()
+st.write(f"Spain Time: `{now}`")
 
-    st.write(f"Structure: {pair['structure']}")
-    st.write(f"Bias: {pair['bias']}")
-    st.write(f"Regime: {pair['regime']}")
-    st.write(f"Score: {pair['score']}")
+pairs = [
+    ("EURUSD", "EURUSD=X"),
+    ("GBPUSD", "GBPUSD=X")
+]
 
-    if pair["levels"] is None:
-        st.warning("No valid price data")
-        return
+for name, symbol in pairs:
+    data = run_pair(name, symbol)
+
+    if data is None:
+        st.error(f"{name} data failed")
+        continue
+
+    st.header(name)
+
+    st.write(f"Structure: {data['structure']}")
+    st.write(f"Bias: {data['bias']}")
+    st.write(f"Regime: {data['regime']}")
+    st.write(f"First Extreme: {data['extreme']}")
+    st.write(f"Score: {data['score']}")
 
     st.subheader("Zones")
-    st.write(f"Buy: {pair['levels']['buy']}")
-    st.write(f"Sell: {pair['levels']['sell']}")
+    st.write(f"Buy: {data['buy']}")
+    st.write(f"Sell: {data['sell']}")
 
     st.subheader("Targets")
-    st.write(f"T1: {pair['levels']['t1']}")
-    st.write(f"T2: {pair['levels']['t2']}")
-    st.write(f"T3: {pair['levels']['t3']}")
+    st.write(f"T1: {data['t1']}")
+    st.write(f"T2: {data['t2']}")
+    st.write(f"T3: {data['t3']}")
 
-    st.subheader("TRSE")
-    st.write(pair["trse"])
-    st.write(f"Delay: {pair['delay']}")
-
-    st.subheader("Time Windows")
-    st.write("London 1: 08:30–10:00")
-    st.write("London 2: 11:30–13:00")
-    st.write("NY: 14:30–16:30")
-
-
-# =========================
-# MAIN APP
-# =========================
-st.set_page_config(page_title="TITAN FULL ENGINE", layout="centered")
-
-st.title("🚀 TITAN FULL ENGINE (STABLE)")
-st.write("Spain Time:", datetime.now())
-
-eur = run_pair("EURUSD", "EURUSD=X")
-gbp = run_pair("GBPUSD", "GBPUSD=X")
-
-display(eur)
-st.divider()
-display(gbp)
+    st.markdown("---")
