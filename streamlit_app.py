@@ -18,7 +18,7 @@ def spain_time():
     return datetime.now(pytz.timezone("Europe/Madrid"))
 
 # =========================
-# DATA (ALWAYS RETURNS DATA)
+# DATA (NEVER FAILS)
 # =========================
 def get_data(pair):
 
@@ -31,7 +31,7 @@ def get_data(pair):
     except:
         pass
 
-    # 🔒 FALLBACK (NEVER FAILS)
+    # 🔒 FALLBACK
     now = datetime.utcnow()
     times = pd.date_range(end=now, periods=200, freq="15min")
 
@@ -49,22 +49,25 @@ def get_data(pair):
     return df
 
 # =========================
-# TITAN CORE ENGINE
+# TITAN CORE (FIXED)
 # =========================
 def titan(df):
 
+    if df is None or len(df) < 20:
+        raise ValueError("Not enough data")
+
     highs = df["High"]
     lows = df["Low"]
-    close = df["Close"].iloc[-1]
+    close = float(df["Close"].iloc[-1])
 
     # RANGE
-    recent_high = highs.iloc[-20:].max()
-    recent_low = lows.iloc[-20:].min()
-    R = recent_high - recent_low
+    recent_high = float(highs.iloc[-20:].max())
+    recent_low = float(lows.iloc[-20:].min())
+    R = float(recent_high - recent_low)
 
-    # REGIME (FOREVER)
-    current_range = highs.iloc[-1] - lows.iloc[-1]
-    avg_range = (highs - lows).iloc[-20:].mean()
+    # 🔒 FIXED REGIME LOGIC
+    current_range = float(highs.iloc[-1] - lows.iloc[-1])
+    avg_range = float((highs - lows).iloc[-20:].mean())
 
     if current_range < avg_range:
         regime = "HFL (HIGH first)"
@@ -74,30 +77,38 @@ def titan(df):
         bias = "BUY"
 
     # ZONES
-    sell_zone = (recent_high - 0.2 * R, recent_high)
-    buy_zone = (recent_low, recent_low + 0.2 * R)
+    sell_zone = (
+        float(recent_high - 0.2 * R),
+        float(recent_high)
+    )
+
+    buy_zone = (
+        float(recent_low),
+        float(recent_low + 0.2 * R)
+    )
 
     # INVALIDATION
-    inv_up = recent_high
-    inv_down = recent_low
+    inv_up = float(recent_high)
+    inv_down = float(recent_low)
 
     # TARGETS
     if bias == "SELL":
-        t1 = close - 0.5 * R
-        t2 = close - 1.0 * R
-        t3 = close - 1.5 * R
+        t1 = float(close - 0.5 * R)
+        t2 = float(close - 1.0 * R)
+        t3 = float(close - 1.5 * R)
 
-        alt_t1 = close + 0.5 * R
-        alt_t2 = close + 1.0 * R
-        alt_t3 = close + 1.5 * R
+        alt_t1 = float(close + 0.5 * R)
+        alt_t2 = float(close + 1.0 * R)
+        alt_t3 = float(close + 1.5 * R)
+
     else:
-        t1 = close + 0.5 * R
-        t2 = close + 1.0 * R
-        t3 = close + 1.5 * R
+        t1 = float(close + 0.5 * R)
+        t2 = float(close + 1.0 * R)
+        t3 = float(close + 1.5 * R)
 
-        alt_t1 = close - 0.5 * R
-        alt_t2 = close - 1.0 * R
-        alt_t3 = close - 1.5 * R
+        alt_t1 = float(close - 0.5 * R)
+        alt_t2 = float(close - 1.0 * R)
+        alt_t3 = float(close - 1.5 * R)
 
     return {
         "regime": regime,
@@ -115,7 +126,7 @@ def titan(df):
     }
 
 # =========================
-# TIME WINDOWS (TEMP BASE)
+# TIME WINDOWS
 # =========================
 def time_windows():
 
@@ -144,42 +155,41 @@ def show(pair):
 
     st.header(pair)
 
-    df = get_data(pair)
+    try:
+        df = get_data(pair)
+        r = titan(df)
 
-    if df is None or len(df) < 20:
-        st.error("Data error")
-        return
+        st.write(f"🟡 Regime Expectation: 🔴 {r['regime']}")
 
-    r = titan(df)
-    tw = time_windows()
-    t = trse()
+        st.write(f"🔴 PRIMARY SELL ZONE: {fmt(r['sell_zone'][0])} – {fmt(r['sell_zone'][1])}")
+        st.write(f"🟢 ALTERNATE BUY: {fmt(r['buy_zone'][0])} – {fmt(r['buy_zone'][1])}")
 
-    st.write(f"🟡 Regime Expectation: 🔴 {r['regime']}")
+        st.write(f"🟡 Invalidation Up: {fmt(r['inv_up'])}")
+        st.write(f"🟡 Invalidation Down: {fmt(r['inv_down'])}")
 
-    st.write(f"🔴 PRIMARY SELL ZONE: {fmt(r['sell_zone'][0])} – {fmt(r['sell_zone'][1])}")
-    st.write(f"🟢 ALTERNATE BUY: {fmt(r['buy_zone'][0])} – {fmt(r['buy_zone'][1])}")
+        st.write("🟡 Continuation Targets (PRIMARY):")
+        st.write(f"T1: {fmt(r['t1'])}")
+        st.write(f"T2: {fmt(r['t2'])}")
+        st.write(f"T3: {fmt(r['t3'])}")
 
-    st.write(f"🟡 Invalidation Up: {fmt(r['inv_up'])}")
-    st.write(f"🟡 Invalidation Down: {fmt(r['inv_down'])}")
+        st.write("🟡 Continuation Targets (ALTERNATE):")
+        st.write(f"T1: {fmt(r['alt_t1'])}")
+        st.write(f"T2: {fmt(r['alt_t2'])}")
+        st.write(f"T3: {fmt(r['alt_t3'])}")
 
-    st.write("🟡 Continuation Targets (PRIMARY):")
-    st.write(f"T1: {fmt(r['t1'])}")
-    st.write(f"T2: {fmt(r['t2'])}")
-    st.write(f"T3: {fmt(r['t3'])}")
+        st.write("🟠 Time Windows (Spain):")
+        for w in time_windows():
+            st.write(f"{w[0].strftime('%H:%M')} – {w[1].strftime('%H:%M')}")
 
-    st.write("🟡 Continuation Targets (ALTERNATE):")
-    st.write(f"T1: {fmt(r['alt_t1'])}")
-    st.write(f"T2: {fmt(r['alt_t2'])}")
-    st.write(f"T3: {fmt(r['alt_t3'])}")
+        t = trse()
+        st.write("🟡 TRSE OUTPUT:")
+        st.write(f"Regime: {t['regime']}")
+        st.write(f"Delay Day Count: {t['delay']}")
+        st.write(f"Next-Day Expectation: {t['next']}")
 
-    st.write("🟠 Time Windows (Spain):")
-    for w in tw:
-        st.write(f"{w[0].strftime('%H:%M')} – {w[1].strftime('%H:%M')}")
-
-    st.write("🟡 TRSE OUTPUT:")
-    st.write(f"Regime: {t['regime']}")
-    st.write(f"Delay Day Count: {t['delay']}")
-    st.write(f"Next-Day Expectation: {t['next']}")
+    except Exception as e:
+        st.error("Engine error")
+        st.write(str(e))
 
 # =========================
 # APP
