@@ -21,7 +21,7 @@ def get_data(symbol):
     params = {
         "symbol": symbol,
         "interval": "15min",
-        "outputsize": 500,  # IMPORTANT (more history)
+        "outputsize": 500,
         "apikey": API_KEY
     }
 
@@ -56,13 +56,15 @@ def get_data(symbol):
     return df
 
 # =====================================
-# 🧠 TITAN ENGINE (FIXED)
+# 🧠 TITAN ENGINE (FINAL FIXED)
 # =====================================
 def titan_engine(df):
 
-    # --- FIXED DATE HANDLING ---
-    today = pd.Timestamp.utcnow().floor("D")
-    yesterday_df = df[df["time"] < today]
+    # ✅ SAFE DATE FIX (NO TYPE ERROR)
+    df["date"] = df["time"].dt.date
+    today = datetime.utcnow().date()
+
+    yesterday_df = df[df["date"] < today]
 
     if yesterday_df.empty:
         return None
@@ -103,17 +105,14 @@ def titan_engine(df):
     else:
         regime = "RANGE"
 
-    # --- Midpoint ---
     midpoint = (prev_high + prev_low) / 2
 
-    # --- Zones ---
     sell_zone = (asia_high, asia_high + 0.0003)
     buy_zone = (asia_low - 0.0003, asia_low)
 
-    # --- Range ---
     range_size = asia_high - asia_low
 
-    # --- TARGETS (ASYMMETRIC FIXED) ---
+    # --- TARGETS (ASYMMETRIC)
     if regime == "HFL":
         t1 = asia_mid
         t2 = asia_low
@@ -129,7 +128,6 @@ def titan_engine(df):
         t2 = prev_high
         t3 = prev_low
 
-    # --- Invalidation ---
     invalid_up = asia_high + range_size * 0.2
     invalid_down = asia_low - range_size * 0.2
 
@@ -138,13 +136,10 @@ def titan_engine(df):
 
     if regime != "RANGE":
         score += 30
-
     if abs(price - midpoint) < range_size:
         score += 20
-
     if broke_high or broke_low:
         score += 20
-
     if range_size > 0.002:
         score += 30
 
