@@ -21,7 +21,7 @@ def get_data(symbol):
     params = {
         "symbol": symbol,
         "interval": "15min",
-        "outputsize": 200,
+        "outputsize": 500,  # IMPORTANT (more history)
         "apikey": API_KEY
     }
 
@@ -33,6 +33,7 @@ def get_data(symbol):
         return None
 
     df = pd.DataFrame(data["values"])
+
     df = df.rename(columns={
         "datetime": "time",
         "open": "open",
@@ -55,17 +56,26 @@ def get_data(symbol):
     return df
 
 # =====================================
-# 🧠 TITAN ENGINE
+# 🧠 TITAN ENGINE (FIXED)
 # =====================================
 def titan_engine(df):
 
-    # --- Previous day structure ---
-    yesterday = df[df["time"] < datetime.utcnow().date()]
-    prev_high = yesterday["high"].max()
-    prev_low = yesterday["low"].min()
+    # --- FIXED DATE HANDLING ---
+    today = pd.Timestamp.utcnow().floor("D")
+    yesterday_df = df[df["time"] < today]
 
-    # --- Asia session (00:00–06:00 UTC) ---
+    if yesterday_df.empty:
+        return None
+
+    prev_high = yesterday_df["high"].max()
+    prev_low = yesterday_df["low"].min()
+
+    # --- Asia session ---
     asia = df[(df["time"].dt.hour >= 0) & (df["time"].dt.hour < 6)]
+
+    if asia.empty:
+        return None
+
     asia_high = asia["high"].max()
     asia_low = asia["low"].min()
     asia_mid = (asia_high + asia_low) / 2
@@ -73,40 +83,47 @@ def titan_engine(df):
     # --- Current price ---
     price = df.iloc[-1]["close"]
 
-    # --- London breakout detection ---
+    # --- London session ---
     london = df[(df["time"].dt.hour >= 7) & (df["time"].dt.hour < 12)]
+
+    if london.empty:
+        return None
+
     london_high = london["high"].max()
     london_low = london["low"].min()
 
     broke_high = london_high > asia_high
     broke_low = london_low < asia_low
 
-    # --- Regime detection ---
+    # --- Regime ---
     if broke_high and not broke_low:
-        regime = "HFL"  # high first
+        regime = "HFL"
     elif broke_low and not broke_high:
-        regime = "LFHL"  # low first
+        regime = "LFHL"
     else:
         regime = "RANGE"
 
-    # --- Spain midpoint logic ---
+    # --- Midpoint ---
     midpoint = (prev_high + prev_low) / 2
 
     # --- Zones ---
     sell_zone = (asia_high, asia_high + 0.0003)
     buy_zone = (asia_low - 0.0003, asia_low)
 
-    # --- Targets (REAL directional asymmetry) ---
+    # --- Range ---
     range_size = asia_high - asia_low
 
+    # --- TARGETS (ASYMMETRIC FIXED) ---
     if regime == "HFL":
         t1 = asia_mid
         t2 = asia_low
         t3 = asia_low - range_size * 0.5
+
     elif regime == "LFHL":
         t1 = asia_mid
         t2 = asia_high
         t3 = asia_high + range_size * 0.5
+
     else:
         t1 = midpoint
         t2 = prev_high
@@ -116,7 +133,7 @@ def titan_engine(df):
     invalid_up = asia_high + range_size * 0.2
     invalid_down = asia_low - range_size * 0.2
 
-    # --- Confluence score ---
+    # --- Confluence Score ---
     score = 0
 
     if regime != "RANGE":
@@ -155,6 +172,10 @@ def display_pair(symbol):
         return
 
     result = titan_engine(df)
+
+    if result is None:
+        st.warning(f"{symbol}: Not enough session data yet")
+        return
 
     st.subheader(f"🔵 {symbol}")
 
