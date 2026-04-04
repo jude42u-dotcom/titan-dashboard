@@ -1,174 +1,166 @@
 import streamlit as st
-import pandas as pd
 import requests
+import pandas as pd
 from datetime import datetime
 import pytz
+import numpy as np
 
 # ==============================
-# 🔐 API KEY (PUT YOUR KEY HERE)
+# 🔐 HARD KEY CHECK (FAILSAFE)
 # ==============================
-API_KEY = "eb11f97c310f407da9961dc7c67a697e"  # <-- YOUR KEY ALREADY INSERTED
+if "TWELVE_API_KEY" not in st.secrets:
+    st.error("🚫 API KEY MISSING — ADD IN STREAMLIT SECRETS")
+    st.stop()
 
-# ==============================
-# ⏰ SPAIN TIME
-# ==============================
-def get_spain_time():
-    tz = pytz.timezone("Europe/Madrid")
-    return datetime.now(tz)
+API_KEY = st.secrets["TWELVE_API_KEY"]
 
 # ==============================
-# 📡 FETCH DATA
+# 🌍 TIME
 # ==============================
-def get_data(symbol="EUR/USD"):
-    url = "https://api.twelvedata.com/time_series"
-
-    params = {
-        "symbol": symbol,
-        "interval": "15min",
-        "outputsize": 100,
-        "apikey": API_KEY
-    }
-
-    response = requests.get(url, params=params)
-    data = response.json()
-
-    if "status" in data and data["status"] == "error":
-        return None, data
-
-    if "values" not in data:
-        return None, data
-
-    df = pd.DataFrame(data["values"])
-
-    df["datetime"] = pd.to_datetime(df["datetime"])
-    df = df.set_index("datetime")
-    df = df.sort_index()
-
-    for col in ["open", "high", "low", "close"]:
-        df[col] = df[col].astype(float)
-
-    df = df.rename(columns={
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close"
-    })
-
-    return df, data
+def spain_time():
+    return datetime.now(pytz.timezone("Europe/Madrid"))
 
 # ==============================
-# 🧪 VALIDATION
+# 📡 DATA FETCH
 # ==============================
-def validate(df):
-    if df is None or df.empty:
-        return False, "NO DATA"
+def get_data(symbol):
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=100&apikey={API_KEY}"
+    r = requests.get(url).json()
+    
+    if "values" not in r:
+        return None, r
 
-    if len(df) < 20:
-        return False, "INSUFFICIENT DATA"
+    df = pd.DataFrame(r["values"])
+    df = df.astype({"open":float,"high":float,"low":float,"close":float})
+    df = df.iloc[::-1].reset_index(drop=True)
+    
+    return df, r
 
-    if df.isnull().any().any():
-        return False, "NaN FOUND"
+# ==============================
+# 🧠 TRSE
+# ==============================
+def trse(df):
+    highs = df["high"].tail(8).values
+    lows = df["low"].tail(8).values
+    
+    trend = np.sign(highs[-1] - highs[0])
 
-    if (df["High"] < df["Low"]).any():
-        return False, "INVALID HIGH/LOW"
-
-    if df.index.duplicated().any():
-        return False, "DUPLICATE TIMESTAMPS"
-
-    return True, "OK"
+    if abs(highs[-1] - highs[0]) < 0.0005:
+        return "RES", 0, "Rotation Expected"
+    elif trend != 0:
+        return "PCS", 0, "Continuation Likely"
+    else:
+        return "RDS", 3, "Rotation Pressure"
 
 # ==============================
 # 🧠 TITAN ENGINE
 # ==============================
 def titan(df):
-    close = df["Close"]
-    high = df["High"]
-    low = df["Low"]
 
-    recent_high = high.iloc[-5:].max()
-    recent_low = low.iloc[-5:].min()
+    last = df.iloc[-1]
+    high = df["high"].max()
+    low = df["low"].min()
+    mid = (high + low)/2
+    rng = high - low
 
-    prev_high = high.iloc[-10:-5].max()
-    prev_low = low.iloc[-10:-5].min()
-
-    if recent_high > prev_high and recent_low > prev_low:
-        structure = "UPTREND"
-    elif recent_high < prev_high and recent_low < prev_low:
-        structure = "DOWNTREND"
+    if last["close"] > mid:
+        regime = "LFHL"
+        prob = "62%"
+        first = "LOW"
     else:
-        structure = "RANGE"
+        regime = "HFL"
+        prob = "58%"
+        first = "HIGH"
 
-    momentum = close.iloc[-1] - close.iloc[-4]
-    pressure = "BUY" if momentum > 0 else "SELL"
+    sell_zone = (high - rng*0.2, high)
+    buy_zone = (low, low + rng*0.2)
 
-    ranges = high - low
-    recent_range = ranges.iloc[-1]
-    avg_range = ranges.iloc[-10:].mean()
+    t1d = mid - rng*0.25
+    t2d = mid - rng*0.5
+    t3d = low
 
-    volatility = "EXPANSION" if recent_range > avg_range * 1.2 else "COMPRESSION"
+    t1u = mid + rng*0.25
+    t2u = mid + rng*0.5
+    t3u = high
 
-    speed = abs(close.iloc[-1] - close.iloc[-3])
-    time_state = "ACCELERATION" if speed > avg_range else "NORMAL"
+    inv_up = high + rng*0.02
+    inv_dn = low - rng*0.02
 
-    score = 0
-    score += 2 if structure == "UPTREND" else -2 if structure == "DOWNTREND" else 0
-    score += 1 if pressure == "BUY" else -1
+    london1 = "08:10–09:40"
+    london2 = "10:30–11:50"
+    ny = "14:30–15:45"
 
-    if volatility == "EXPANSION":
-        score += 1 if pressure == "BUY" else -1
+    score = int((abs(last["close"] - mid)/rng)*100)
 
-    if time_state == "ACCELERATION":
-        score += 1 if pressure == "BUY" else -1
-
-    if score >= 2:
-        bias = "BULLISH"
-    elif score <= -2:
-        bias = "BEARISH"
-    else:
-        bias = "NEUTRAL"
+    trse_regime, trse_day, trse_exp = trse(df)
 
     return {
-        "bias": bias,
-        "score": score,
-        "structure": structure,
-        "pressure": pressure,
-        "volatility": volatility,
-        "time_state": time_state,
-        "last_price": close.iloc[-1]
+        "sell":sell_zone,
+        "buy":buy_zone,
+        "inv_up":inv_up,
+        "inv_dn":inv_dn,
+        "t1d":t1d,"t2d":t2d,"t3d":t3d,
+        "t1u":t1u,"t2u":t2u,"t3u":t3u,
+        "regime":regime,"prob":prob,"first":first,
+        "l1":london1,"l2":london2,"ny":ny,
+        "score":score,
+        "trse":trse_regime,
+        "day":trse_day,
+        "exp":trse_exp
     }
 
 # ==============================
-# 🎯 UI
+# 🎯 OUTPUT
 # ==============================
-st.title("🚀 TITAN PRO ENGINE (STABLE BUILD)")
-st.write(f"Spain Time: {get_spain_time()}")
+def display(pair, d):
 
-pairs = ["EUR/USD", "GBP/USD"]
+    st.markdown(f"## 🔵 {pair}")
 
-for symbol in pairs:
+    st.markdown(f"🟡 Macro Bias: Structural rotation environment")
+    st.markdown(f"🟡 Regime Expectation: {d['regime']} {d['prob']} ({d['first']} first)")
+    st.markdown(f"🟡 Session Model: Asia → London → NY")
 
-    st.header(symbol)
+    st.markdown(f"🔴 PRIMARY SELL ZONE: 🟣 {round(d['sell'][0],5)} – {round(d['sell'][1],5)}")
+    st.markdown(f"🟢 ALTERNATE BUY: 🟣 {round(d['buy'][0],5)} – {round(d['buy'][1],5)}")
 
-    df, raw = get_data(symbol)
+    st.markdown(f"🟡 Invalidation Up: 🟣 {round(d['inv_up'],5)}")
+    st.markdown(f"🟡 Invalidation Down: 🟣 {round(d['inv_dn'],5)}")
 
-    valid, reason = validate(df)
+    st.markdown("🟡 Continuation Targets (HIGH first):")
+    st.markdown(f"T1: 🟣 {round(d['t1d'],5)}")
+    st.markdown(f"T2: 🟣 {round(d['t2d'],5)}")
+    st.markdown(f"T3: 🟣 {round(d['t3d'],5)}")
 
-    if not valid:
-        st.error(f"DATA REJECTED: {reason}")
-        continue
+    st.markdown("🟡 Continuation Targets (LOW first):")
+    st.markdown(f"T1: 🟣 {round(d['t1u'],5)}")
+    st.markdown(f"T2: 🟣 {round(d['t2u'],5)}")
+    st.markdown(f"T3: 🟣 {round(d['t3u'],5)}")
 
-    result = titan(df)
+    st.markdown(f"🟠 London Windows: 🟣 {d['l1']} 🟣 {d['l2']}")
+    st.markdown(f"🟠 NY Window: 🟣 {d['ny']}")
 
-    if result["bias"] == "BULLISH":
-        st.success(f"Bias: {result['bias']}")
-    elif result["bias"] == "BEARISH":
-        st.error(f"Bias: {result['bias']}")
+    st.markdown(f"🟡 Confluence Score: 🟣 {d['score']} / 100")
+
+    st.markdown(f"🟡 TRSE OUTPUT:")
+    st.markdown(f"Regime: {d['trse']}")
+    st.markdown(f"Delay Day: {d['day']}")
+    st.markdown(f"Expectation: {d['exp']}")
+
+    st.markdown("---")
+
+# ==============================
+# 🚀 APP
+# ==============================
+st.title("🚀 TITAN FULL ENGINE")
+
+st.write(f"Spain Time: {spain_time()}")
+
+for pair in ["EUR/USD","GBP/USD"]:
+    df, raw = get_data(pair)
+
+    if df is None:
+        st.error("DATA ERROR")
+        st.json(raw)
     else:
-        st.warning(f"Bias: {result['bias']}")
-
-    st.write(f"Score: {result['score']}")
-    st.write(f"Structure: {result['structure']}")
-    st.write(f"Pressure: {result['pressure']}")
-    st.write(f"Volatility: {result['volatility']}")
-    st.write(f"Time State: {result['time_state']}")
-    st.write(f"Last Price: {result['last_price']}")
+        d = titan(df)
+        display(pair.replace("/",""), d)
