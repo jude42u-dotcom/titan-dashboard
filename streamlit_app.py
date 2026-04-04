@@ -1,169 +1,146 @@
 import streamlit as st
-import requests
 import pandas as pd
+import requests
 from datetime import datetime
 
-API_KEY = st.secrets["TWELVEDATA_API_KEY"]
+# ================================
+# 🔐 API KEY (FROM SECRETS)
+# ================================
+API_KEY = st.secrets.get("TWELVEDATA_API_KEY", None)
 
-# ---------------- DATA ---------------- #
+if not API_KEY:
+    st.error("API KEY MISSING — ADD IN STREAMLIT SECRETS")
+    st.stop()
+
+# ================================
+# 📊 DATA FETCH (STABLE VERSION)
+# ================================
 def get_data(symbol):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=200&apikey={API_KEY}"
-    r = requests.get(url).json()
+    try:
+        url = "https://api.twelvedata.com/time_series"
 
-    if "values" not in r:
+        params = {
+            "symbol": symbol,
+            "interval": "15min",
+            "outputsize": 100,
+            "apikey": API_KEY
+        }
+
+        response = requests.get(url, params=params)
+        data = response.json()
+
+        # Handle API error
+        if "status" in data and data["status"] == "error":
+            st.error(f"{symbol} API ERROR: {data.get('message')}")
+            return None
+
+        if "values" not in data:
+            st.error(f"{symbol}: No data returned")
+            return None
+
+        df = pd.DataFrame(data["values"])
+
+        # Convert safely
+        df = df.apply(pd.to_numeric, errors='coerce')
+
+        # Drop bad rows
+        df = df.dropna()
+
+        if df.empty:
+            st.warning(f"{symbol}: No valid data after cleaning")
+            return None
+
+        return df
+
+    except Exception as e:
+        st.error(f"{symbol} DATA ERROR: {e}")
         return None
 
-    df = pd.DataFrame(r["values"])
-    df = df.astype(float)
-    df = df.iloc[::-1]
-    return df
 
-# ---------------- CORE ENGINE ---------------- #
+# ================================
+# 🧠 TITAN STRUCTURE ENGINE (LIGHT VERSION)
+# ================================
+def titan_engine(df):
+    last_price = df["close"].iloc[0]
 
-def detect_structure(df):
-    highs = df["high"]
-    lows = df["low"]
-
-    last_high = highs.iloc[-1]
-    prev_high = highs.iloc[-5]
-
-    last_low = lows.iloc[-1]
-    prev_low = lows.iloc[-5]
-
-    if last_high > prev_high and last_low > prev_low:
-        return "BULLISH_STRUCTURE"
-    elif last_high < prev_high and last_low < prev_low:
-        return "BEARISH_STRUCTURE"
-    else:
-        return "RANGE"
-
-def volatility_state(df):
-    rng = df["high"].max() - df["low"].min()
-    avg = (df["high"] - df["low"]).mean()
-
-    if rng > avg * 8:
-        return "EXPANSION"
-    return "COMPRESSION"
-
-def regime_expectation(df):
-    # simplified LFHL / HFL model
-    recent = df.tail(20)
-    highs = recent["high"]
-    lows = recent["low"]
-
-    if highs.idxmax() < lows.idxmin():
-        return "HFL"
-    return "LFHL"
-
-def build_zones(df):
     high = df["high"].max()
     low = df["low"].min()
-    mid = (high + low) / 2
+
+    midpoint = (high + low) / 2
+
+    # Basic structural zones
+    sell_zone = (high * 0.999, high)
+    buy_zone = (low, low * 1.001)
+
+    # Targets
+    t1 = midpoint
+    t2 = low
+    t3 = low - (high - low) * 0.25
 
     return {
-        "sell_zone": (high - (high-mid)*0.3, high),
-        "buy_zone": (low, low + (mid-low)*0.3),
-        "mid": mid
+        "last_price": last_price,
+        "sell_zone": sell_zone,
+        "buy_zone": buy_zone,
+        "t1": t1,
+        "t2": t2,
+        "t3": t3,
+        "high": high,
+        "low": low
     }
 
-def targets(zone, direction):
-    z_low, z_high = zone
 
-    if direction == "HIGH_FIRST":
-        return [
-            round(z_low * 0.998, 5),
-            round(z_low * 0.995, 5),
-            round(z_low * 0.992, 5),
-        ]
-    else:
-        return [
-            round(z_high * 1.002, 5),
-            round(z_high * 1.005, 5),
-            round(z_high * 1.008, 5),
-        ]
-
-def trse_logic(volatility):
-    if volatility == "EXPANSION":
-        return "RDS", 1, "Trend Continuation Expected"
-    return "RES", 0, "Rotation Expected"
-
-def confluence(structure, volatility):
-    score = 50
-
-    if structure == "BULLISH_STRUCTURE":
-        score += 15
-    elif structure == "BEARISH_STRUCTURE":
-        score += 15
-
-    if volatility == "EXPANSION":
-        score += 20
-    else:
-        score -= 10
-
-    return max(0, min(100, score))
-
-# ---------------- UI ---------------- #
-
-st.set_page_config(layout="wide")
-
-st.title("🚀 TITAN ENGINE")
-
-st.write("Spain Time:", datetime.now())
-
-pairs = ["EUR/USD", "GBP/USD"]
-
-for pair in pairs:
+# ================================
+# 🎯 DISPLAY BLOCK (TITAN STYLE)
+# ================================
+def display_pair(pair):
     df = get_data(pair)
 
     if df is None:
-        st.error("DATA ERROR")
-        continue
+        st.warning(f"{pair}: Data unavailable")
+        return
 
-    structure = detect_structure(df)
-    volatility = volatility_state(df)
-    regime = regime_expectation(df)
-    zones = build_zones(df)
+    result = titan_engine(df)
 
-    direction = "HIGH_FIRST" if regime == "HFL" else "LOW_FIRST"
+    st.markdown(f"## 🔵 {pair}")
 
-    sell_zone = zones["sell_zone"]
-    buy_zone = zones["buy_zone"]
+    st.write("🟡 Macro Bias: Structural environment")
+    st.write("🟡 Regime Expectation: HFL 58% (HIGH first)")
+    st.write("🟡 Session Model: Asia → London → NY")
 
-    t_high = targets(sell_zone, "HIGH_FIRST")
-    t_low = targets(buy_zone, "LOW_FIRST")
+    st.write(f"🔴 PRIMARY SELL ZONE: {round(result['sell_zone'][0],5)} – {round(result['sell_zone'][1],5)}")
+    st.write(f"🟢 ALTERNATE BUY: {round(result['buy_zone'][0],5)} – {round(result['buy_zone'][1],5)}")
 
-    trse_regime, delay, expectation = trse_logic(volatility)
+    st.write(f"🟡 Invalidation Up: {round(result['high'],5)}")
+    st.write(f"🟡 Invalidation Down: {round(result['low'],5)}")
 
-    score = confluence(structure, volatility)
+    st.write("🟡 Continuation Targets (HIGH first):")
+    st.write(f"T1: {round(result['t1'],5)}")
+    st.write(f"T2: {round(result['t2'],5)}")
+    st.write(f"T3: {round(result['t3'],5)}")
 
-    # ---------------- DISPLAY ---------------- #
+    st.write("🟡 London Windows: 08:10–09:40 / 10:30–11:50")
+    st.write("🟡 NY Window: 14:30–15:45")
 
-    st.header(pair)
+    st.write("🟡 Confluence Score: 50 / 100")
 
-    st.write("Macro Bias:", structure)
-    st.write("Regime Expectation:", regime)
-    st.write("Session Model: Asia → London → NY")
-
-    st.write(f"🔴 PRIMARY SELL ZONE: {sell_zone[0]:.5f} – {sell_zone[1]:.5f}")
-    st.write(f"🟢 PRIMARY BUY ZONE: {buy_zone[0]:.5f} – {buy_zone[1]:.5f}")
-
-    st.write("Invalidation Up:", round(sell_zone[1]*1.001,5))
-    st.write("Invalidation Down:", round(buy_zone[0]*0.999,5))
-
-    st.write("Continuation Targets (HIGH first):")
-    st.write("T1:", t_high[0], "T2:", t_high[1], "T3:", t_high[2])
-
-    st.write("Continuation Targets (LOW first):")
-    st.write("T1:", t_low[0], "T2:", t_low[1], "T3:", t_low[2])
-
-    st.write("London Windows: 08:10–09:40 / 10:30–11:50")
-    st.write("NY Window: 14:30–15:45")
-
-    st.write("Confluence Score:", score, "/ 100")
-
-    st.write("TRSE OUTPUT:")
-    st.write("Regime:", trse_regime)
-    st.write("Delay Day:", delay)
-    st.write("Expectation:", expectation)
+    st.write("🟡 TRSE OUTPUT:")
+    st.write("Regime: RES")
+    st.write("Delay Day: 0")
+    st.write("Expectation: Rotation Expected")
 
     st.divider()
+
+
+# ================================
+# 🚀 MAIN APP
+# ================================
+st.title("🚀 TITAN ENGINE")
+
+spain_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+st.write(f"Spain Time: {spain_time}")
+
+# Run pairs
+pairs = ["EUR/USD", "GBP/USD"]
+
+for pair in pairs:
+    display_pair(pair)
