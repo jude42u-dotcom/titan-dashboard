@@ -3,6 +3,24 @@ import pandas as pd
 import numpy as np
 import requests
 from datetime import datetime
+import pytz
+
+# ============================================
+# 🔒 LOCK MODE (ADDED)
+# ============================================
+SPAIN_TZ = pytz.timezone("Europe/Madrid")
+
+def get_spain_date():
+    return datetime.now(SPAIN_TZ).date()
+
+if "titan_locked_date" not in st.session_state:
+    st.session_state.titan_locked_date = None
+
+today_spain = get_spain_date()
+
+if st.session_state.titan_locked_date == today_spain:
+    st.warning("🔒 TITAN LOCKED FOR TODAY — Refresh disabled")
+    st.stop()
 
 # ============================================
 # 🔐 YOUR API KEY (UNCHANGED)
@@ -10,7 +28,7 @@ from datetime import datetime
 API_KEY = "eb11f97c310f407da9961dc7c67a697e"
 
 # ============================================
-# 📅 JENKINS CALENDAR (ADDED)
+# 📅 JENKINS CALENDAR (UNCHANGED)
 # ============================================
 JENKINS_DATES = {
     "EUR/USD": [
@@ -127,7 +145,7 @@ def titan_engine(df):
     }
 
 # ============================================
-# 🔥 GANN TIME (ADDED)
+# 🔥 GANN TIME (UNCHANGED)
 # ============================================
 def titan_time_pdf(df):
     if df is None or df.empty:
@@ -154,7 +172,7 @@ def titan_time_pdf(df):
     return windows
 
 # ============================================
-# 🔥 HARMONIC TIME WINDOWS (ADDED)
+# 🔥 HARMONIC TIME WINDOWS (UNCHANGED)
 # ============================================
 def calculate_time_windows(df):
 
@@ -189,7 +207,7 @@ def calculate_time_windows(df):
     }
 
 # ============================================
-# 🔥 JENKINS DETECTOR (ADDED)
+# 🔥 JENKINS DETECTOR (UNCHANGED)
 # ============================================
 def get_active_jenkins(pair):
     today = datetime.now().date()
@@ -247,15 +265,12 @@ for pair in pairs:
 
     st.write("🟡 Score:", result["score"])
 
-    # TRSE
     st.write("🟡 TRSE:", result["trse"])
 
-    # GANN TIME
     st.write("⏱ GANN TIME:")
     for t in time_pdf:
         st.write(t["time"].strftime("%H:%M"))
 
-    # HARMONIC TIME
     st.write("⏱ LOW WINDOWS:")
     for t in harmonic["low_windows"]:
         st.write(t.strftime("%H:%M"))
@@ -264,7 +279,6 @@ for pair in pairs:
     for t in harmonic["high_windows"]:
         st.write(t.strftime("%H:%M"))
 
-    # JENKINS
     st.write("📅 JENKINS:")
     if jenkins:
         for d, s in jenkins:
@@ -273,3 +287,19 @@ for pair in pairs:
         st.write("No active Jenkins date")
 
     st.markdown("---")
+
+# ============================================
+# 📜 EXECUTION RULES (ADDED)
+# ============================================
+st.markdown("### 🧠 Execution Rules")
+
+st.markdown("""
+• Trade only inside window  
+• First confirmed extreme defines direction  
+• Respect structural invalidation  
+• No confirmation → No trade  
+• NY trade only if London expansion confirmed
+""")
+
+# 🔒 LOCK DAY AFTER RUN
+st.session_state.titan_locked_date = today_spain
