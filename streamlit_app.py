@@ -2,170 +2,168 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
-import pytz
-import numpy as np
 
-# ==============================
-# 🔐 YOUR API KEY (EMBEDDED)
-# ==============================
-API_KEY = "eb11f97c310f407da9961dc7c67a697e"
+API_KEY = st.secrets["TWELVEDATA_API_KEY"]
 
-# ==============================
-# ⏰ TIME
-# ==============================
-def spain_time():
-    return datetime.now(pytz.timezone("Europe/Madrid"))
-
-# ==============================
-# 📡 DATA FETCH
-# ==============================
+# ---------------- DATA ---------------- #
 def get_data(symbol):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=100&apikey={API_KEY}"
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=200&apikey={API_KEY}"
     r = requests.get(url).json()
 
     if "values" not in r:
-        return None, r
+        return None
 
     df = pd.DataFrame(r["values"])
-    df = df.astype({"open":float,"high":float,"low":float,"close":float})
-    df = df.iloc[::-1].reset_index(drop=True)
+    df = df.astype(float)
+    df = df.iloc[::-1]
+    return df
 
-    return df, r
+# ---------------- CORE ENGINE ---------------- #
 
-# ==============================
-# 🧠 TRSE
-# ==============================
-def trse(df):
-    highs = df["high"].tail(8).values
-    move = highs[-1] - highs[0]
+def detect_structure(df):
+    highs = df["high"]
+    lows = df["low"]
 
-    if abs(move) < 0.0005:
-        return "RES", 0, "Rotation Expected"
-    elif move > 0:
-        return "PCS", 0, "Continuation Likely"
+    last_high = highs.iloc[-1]
+    prev_high = highs.iloc[-5]
+
+    last_low = lows.iloc[-1]
+    prev_low = lows.iloc[-5]
+
+    if last_high > prev_high and last_low > prev_low:
+        return "BULLISH_STRUCTURE"
+    elif last_high < prev_high and last_low < prev_low:
+        return "BEARISH_STRUCTURE"
     else:
-        return "RDS", 3, "Rotation Pressure"
+        return "RANGE"
 
-# ==============================
-# 🧠 TITAN STRUCTURE ENGINE
-# ==============================
-def titan(df):
+def volatility_state(df):
+    rng = df["high"].max() - df["low"].min()
+    avg = (df["high"] - df["low"]).mean()
 
-    last = df.iloc[-1]
+    if rng > avg * 8:
+        return "EXPANSION"
+    return "COMPRESSION"
 
+def regime_expectation(df):
+    # simplified LFHL / HFL model
+    recent = df.tail(20)
+    highs = recent["high"]
+    lows = recent["low"]
+
+    if highs.idxmax() < lows.idxmin():
+        return "HFL"
+    return "LFHL"
+
+def build_zones(df):
     high = df["high"].max()
     low = df["low"].min()
     mid = (high + low) / 2
-    rng = high - low
-
-    if last["close"] > mid:
-        regime = "LFHL"
-        first = "LOW"
-        prob = "62%"
-    else:
-        regime = "HFL"
-        first = "HIGH"
-        prob = "58%"
-
-    sell_zone = (high - rng*0.2, high)
-    buy_zone = (low, low + rng*0.2)
-
-    t1_down = mid - rng*0.25
-    t2_down = mid - rng*0.5
-    t3_down = low
-
-    t1_up = mid + rng*0.25
-    t2_up = mid + rng*0.5
-    t3_up = high
-
-    inv_up = high + rng*0.02
-    inv_dn = low - rng*0.02
-
-    london_1 = "08:10–09:40"
-    london_2 = "10:30–11:50"
-    ny_window = "14:30–15:45"
-
-    score = int((abs(last["close"] - mid) / rng) * 100)
-
-    regime_trse, day, exp = trse(df)
 
     return {
-        "sell": sell_zone,
-        "buy": buy_zone,
-        "inv_up": inv_up,
-        "inv_dn": inv_dn,
-        "t1d": t1_down,
-        "t2d": t2_down,
-        "t3d": t3_down,
-        "t1u": t1_up,
-        "t2u": t2_up,
-        "t3u": t3_up,
-        "regime": regime,
-        "first": first,
-        "prob": prob,
-        "l1": london_1,
-        "l2": london_2,
-        "ny": ny_window,
-        "score": score,
-        "trse": regime_trse,
-        "day": day,
-        "exp": exp
+        "sell_zone": (high - (high-mid)*0.3, high),
+        "buy_zone": (low, low + (mid-low)*0.3),
+        "mid": mid
     }
 
-# ==============================
-# 🎯 DISPLAY
-# ==============================
-def display(pair, d):
+def targets(zone, direction):
+    z_low, z_high = zone
 
-    st.markdown(f"## 🔵 {pair}")
+    if direction == "HIGH_FIRST":
+        return [
+            round(z_low * 0.998, 5),
+            round(z_low * 0.995, 5),
+            round(z_low * 0.992, 5),
+        ]
+    else:
+        return [
+            round(z_high * 1.002, 5),
+            round(z_high * 1.005, 5),
+            round(z_high * 1.008, 5),
+        ]
 
-    st.markdown(f"🟡 Macro Bias: Structural environment")
-    st.markdown(f"🟡 Regime Expectation: {d['regime']} {d['prob']} ({d['first']} first)")
-    st.markdown(f"🟡 Session Model: Asia → London → NY")
+def trse_logic(volatility):
+    if volatility == "EXPANSION":
+        return "RDS", 1, "Trend Continuation Expected"
+    return "RES", 0, "Rotation Expected"
 
-    st.markdown(f"🔴 PRIMARY SELL ZONE: 🟣 {round(d['sell'][0],5)} – {round(d['sell'][1],5)}")
-    st.markdown(f"🟢 ALTERNATE BUY: 🟣 {round(d['buy'][0],5)} – {round(d['buy'][1],5)}")
+def confluence(structure, volatility):
+    score = 50
 
-    st.markdown(f"🟡 Invalidation Up: 🟣 {round(d['inv_up'],5)}")
-    st.markdown(f"🟡 Invalidation Down: 🟣 {round(d['inv_dn'],5)}")
+    if structure == "BULLISH_STRUCTURE":
+        score += 15
+    elif structure == "BEARISH_STRUCTURE":
+        score += 15
 
-    st.markdown("🟡 Continuation Targets (HIGH first):")
-    st.markdown(f"T1: 🟣 {round(d['t1d'],5)}")
-    st.markdown(f"T2: 🟣 {round(d['t2d'],5)}")
-    st.markdown(f"T3: 🟣 {round(d['t3d'],5)}")
+    if volatility == "EXPANSION":
+        score += 20
+    else:
+        score -= 10
 
-    st.markdown("🟡 Continuation Targets (LOW first):")
-    st.markdown(f"T1: 🟣 {round(d['t1u'],5)}")
-    st.markdown(f"T2: 🟣 {round(d['t2u'],5)}")
-    st.markdown(f"T3: 🟣 {round(d['t3u'],5)}")
+    return max(0, min(100, score))
 
-    st.markdown(f"🟠 London Windows: 🟣 {d['l1']} 🟣 {d['l2']}")
-    st.markdown(f"🟠 NY Window: 🟣 {d['ny']}")
+# ---------------- UI ---------------- #
 
-    st.markdown(f"🟡 Confluence Score: 🟣 {d['score']} / 100")
+st.set_page_config(layout="wide")
 
-    st.markdown("🟡 TRSE OUTPUT:")
-    st.markdown(f"Regime: {d['trse']}")
-    st.markdown(f"Delay Day: {d['day']}")
-    st.markdown(f"Expectation: {d['exp']}")
-
-    st.markdown("---")
-
-# ==============================
-# 🚀 APP
-# ==============================
 st.title("🚀 TITAN ENGINE")
 
-st.write(f"Spain Time: {spain_time()}")
+st.write("Spain Time:", datetime.now())
 
 pairs = ["EUR/USD", "GBP/USD"]
 
 for pair in pairs:
-    df, raw = get_data(pair)
+    df = get_data(pair)
 
     if df is None:
         st.error("DATA ERROR")
-        st.json(raw)
-    else:
-        result = titan(df)
-        display(pair.replace("/", ""), result)
+        continue
+
+    structure = detect_structure(df)
+    volatility = volatility_state(df)
+    regime = regime_expectation(df)
+    zones = build_zones(df)
+
+    direction = "HIGH_FIRST" if regime == "HFL" else "LOW_FIRST"
+
+    sell_zone = zones["sell_zone"]
+    buy_zone = zones["buy_zone"]
+
+    t_high = targets(sell_zone, "HIGH_FIRST")
+    t_low = targets(buy_zone, "LOW_FIRST")
+
+    trse_regime, delay, expectation = trse_logic(volatility)
+
+    score = confluence(structure, volatility)
+
+    # ---------------- DISPLAY ---------------- #
+
+    st.header(pair)
+
+    st.write("Macro Bias:", structure)
+    st.write("Regime Expectation:", regime)
+    st.write("Session Model: Asia → London → NY")
+
+    st.write(f"🔴 PRIMARY SELL ZONE: {sell_zone[0]:.5f} – {sell_zone[1]:.5f}")
+    st.write(f"🟢 PRIMARY BUY ZONE: {buy_zone[0]:.5f} – {buy_zone[1]:.5f}")
+
+    st.write("Invalidation Up:", round(sell_zone[1]*1.001,5))
+    st.write("Invalidation Down:", round(buy_zone[0]*0.999,5))
+
+    st.write("Continuation Targets (HIGH first):")
+    st.write("T1:", t_high[0], "T2:", t_high[1], "T3:", t_high[2])
+
+    st.write("Continuation Targets (LOW first):")
+    st.write("T1:", t_low[0], "T2:", t_low[1], "T3:", t_low[2])
+
+    st.write("London Windows: 08:10–09:40 / 10:30–11:50")
+    st.write("NY Window: 14:30–15:45")
+
+    st.write("Confluence Score:", score, "/ 100")
+
+    st.write("TRSE OUTPUT:")
+    st.write("Regime:", trse_regime)
+    st.write("Delay Day:", delay)
+    st.write("Expectation:", expectation)
+
+    st.divider()
