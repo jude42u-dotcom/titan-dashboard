@@ -1,15 +1,13 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import requests
 from datetime import datetime
 import pytz
 
 # =========================
-# CONFIG
+# 🔑 API KEY (ALREADY FIXED)
 # =========================
-API_KEY = "PASTE_YOUR_API_KEY_HERE"
-MIN_ROWS = 50
+API_KEY = "eb11f97c310f407da9961dc7c67a697e"
 
 # =========================
 # TIME (SPAIN)
@@ -19,22 +17,34 @@ def spain_time():
     return datetime.now(tz)
 
 # =========================
-# DATA FETCH (TWELVEDATA)
+# DATA FETCH (CORRECT)
 # =========================
 def get_data(symbol):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=100&apikey={API_KEY}"
+    url = (
+        "https://api.twelvedata.com/time_series"
+        f"?symbol={symbol}"
+        "&interval=15min"
+        "&outputsize=100"
+        f"&apikey={API_KEY}"
+    )
 
     try:
-        r = requests.get(url)
-        data = r.json()
+        response = requests.get(url)
+        data = response.json()
 
-        # DEBUG (important)
+        # 🔍 SHOW RAW RESPONSE (DEBUG)
         st.write(f"{symbol} RAW:", data)
+
+        # ❌ API ERROR
+        if "status" in data and data["status"] == "error":
+            return None
 
         if "values" not in data:
             return None
 
         df = pd.DataFrame(data["values"])
+
+        # Rename columns
         df = df.rename(columns={
             "datetime": "Time",
             "open": "Open",
@@ -43,6 +53,7 @@ def get_data(symbol):
             "close": "Close"
         })
 
+        # Convert types
         df["Time"] = pd.to_datetime(df["Time"])
         df = df.sort_values("Time")
 
@@ -58,13 +69,13 @@ def get_data(symbol):
         return None
 
 # =========================
-# VALIDATION LAYER
+# VALIDATION (STRICT)
 # =========================
 def validate(df):
     if df is None or df.empty:
         return False, "NO DATA"
 
-    if len(df) < MIN_ROWS:
+    if len(df) < 50:
         return False, "INSUFFICIENT DATA"
 
     if df.isnull().any().any():
@@ -76,7 +87,7 @@ def validate(df):
     if df.index.duplicated().any():
         return False, "DUPLICATES"
 
-    # Time continuity (15m)
+    # 15-minute continuity check
     delta = df.index.to_series().diff().dropna()
     if not (delta == pd.Timedelta(minutes=15)).all():
         return False, "TIME GAPS"
@@ -84,20 +95,21 @@ def validate(df):
     return True, "OK"
 
 # =========================
-# TITAN CORE (SAFE VERSION)
+# SAFE TITAN CORE
 # =========================
 def titan(df):
     try:
         highs = df["High"]
         lows = df["Low"]
+        close = df["Close"]
 
-        # Basic macro logic (replace later with full TITAN)
+        # Basic stable logic (no crash possible)
         if highs.iloc[-1] > highs.iloc[-5]:
             bias = "BULLISH"
         else:
             bias = "BEARISH"
 
-        last_price = float(df["Close"].iloc[-1])
+        last_price = float(close.iloc[-1])
 
         return {
             "bias": bias,
@@ -137,8 +149,8 @@ st.title("🚀 TITAN PRO ENGINE (STABLE BUILD)")
 
 st.write("Spain Time:", spain_time())
 
-# IMPORTANT: use correct symbols
-pairs = ["EURUSD", "GBPUSD"]
+# ✅ CORRECT SYMBOL FORMAT (IMPORTANT)
+pairs = ["EUR/USD", "GBP/USD"]
 
 for pair in pairs:
     run_pair(pair)
