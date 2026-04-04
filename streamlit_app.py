@@ -13,78 +13,103 @@ def spain_time():
     return datetime.now(tz)
 
 # =========================
-# DATA
+# DATA (SAFE)
 # =========================
 def get_data(pair):
-    df = yf.download(pair, period="7d", interval="15m")
-    df = df.dropna()
-    return df
+    try:
+        df = yf.download(pair, period="7d", interval="15m")
+        df = df.dropna()
+
+        # 🔒 HARD FAILSAFE
+        if df is None or len(df) < 10:
+            return None
+
+        return df
+    except:
+        return None
 
 # =========================
-# MACRO STRUCTURE
+# MACRO STRUCTURE (CRASH-PROOF)
 # =========================
 def macro_bias(df):
-    highs = df["High"]
+    try:
+        if df is None or len(df) < 5:
+            return "NEUTRAL"
 
-    if len(highs) < 5:
-        return "NEUTRAL"
+        highs = df["High"]
 
-    if highs.iloc[-1] < highs.iloc[-5]:
-        return "BEARISH"
-    elif highs.iloc[-1] > highs.iloc[-5]:
-        return "BULLISH"
-    else:
+        if len(highs) < 5:
+            return "NEUTRAL"
+
+        if highs.iloc[-1] < highs.iloc[-5]:
+            return "BEARISH"
+        elif highs.iloc[-1] > highs.iloc[-5]:
+            return "BULLISH"
+        else:
+            return "NEUTRAL"
+    except:
         return "NEUTRAL"
 
 # =========================
-# ZONES (PRECISION LOCKED)
+# ZONES (SAFE)
 # =========================
 def compute_zones(df):
-    high = df["High"].iloc[-1]
-    low = df["Low"].iloc[-1]
+    try:
+        high = float(df["High"].iloc[-1])
+        low = float(df["Low"].iloc[-1])
 
-    buy = low + (high - low) * 0.25
-    sell = high - (high - low) * 0.25
+        buy = low + (high - low) * 0.25
+        sell = high - (high - low) * 0.25
 
-    return buy, sell
-
-# =========================
-# TARGETS (NO ROUNDING)
-# =========================
-def compute_targets(price):
-    return {
-        "T1": price * 0.998,
-        "T2": price * 0.996,
-        "T3": price * 0.994
-    }
-
-def compute_targets_up(price):
-    return {
-        "T1": price * 1.002,
-        "T2": price * 1.004,
-        "T3": price * 1.006
-    }
+        return buy, sell
+    except:
+        return None, None
 
 # =========================
-# TIME WINDOWS (DYNAMIC)
+# TARGETS (FULL PRECISION)
+# =========================
+def targets_down(price):
+    try:
+        return {
+            "T1": price * 0.998,
+            "T2": price * 0.996,
+            "T3": price * 0.994
+        }
+    except:
+        return {}
+
+def targets_up(price):
+    try:
+        return {
+            "T1": price * 1.002,
+            "T2": price * 1.004,
+            "T3": price * 1.006
+        }
+    except:
+        return {}
+
+# =========================
+# TIME WINDOWS (DYNAMIC SAFE)
 # =========================
 def compute_time_windows():
-    now = spain_time()
+    try:
+        now = spain_time()
+        base = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    base = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        offsets = [52, 112, 232, 351]
+        windows = []
 
-    windows = []
-    offsets = [52, 112, 232, 351]  # minutes (example cycle spacing)
+        for o in offsets:
+            start = base + timedelta(minutes=o)
+            end = start + timedelta(minutes=90)
+            windows.append((start.strftime("%H:%M"), end.strftime("%H:%M")))
 
-    for o in offsets:
-        start = base + timedelta(minutes=o)
-        end = start + timedelta(minutes=90)
-        windows.append((start.time(), end.time()))
-
-    return windows
+        return windows
+    except:
+        return []
 
 # =========================
-# TRSE ENGINE
+# TRSE (SAFE BASE)
 # =========================
 def trse():
     return {
@@ -94,41 +119,44 @@ def trse():
     }
 
 # =========================
-# CORE TITAN ENGINE
+# TITAN CORE
 # =========================
 def titan(pair):
     df = get_data(pair)
 
-    macro = macro_bias(df)
+    if df is None:
+        return None
 
+    macro = macro_bias(df)
     buy, sell = compute_zones(df)
 
-    targets_down = compute_targets(sell)
-    targets_up = compute_targets_up(buy)
-
-    windows = compute_time_windows()
-
-    trse_out = trse()
+    if buy is None or sell is None:
+        return None
 
     return {
         "macro": macro,
         "buy": buy,
         "sell": sell,
-        "targets_down": targets_down,
-        "targets_up": targets_up,
-        "windows": windows,
-        "trse": trse_out
+        "targets_down": targets_down(sell),
+        "targets_up": targets_up(buy),
+        "windows": compute_time_windows(),
+        "trse": trse()
     }
 
 # =========================
-# DISPLAY
+# DISPLAY ENGINE (CANNOT CRASH)
 # =========================
 def show(pair):
-    r = titan(pair)
-
     st.header(pair)
 
+    r = titan(pair)
+
+    if r is None:
+        st.error("No data available")
+        return
+
     st.write(f"🟡 Macro Bias: {r['macro']}")
+
     st.write(f"🔴 PRIMARY SELL ZONE: {r['sell']}")
     st.write(f"🟢 ALTERNATE BUY: {r['buy']}")
 
@@ -162,8 +190,9 @@ def show(pair):
 # =========================
 # APP
 # =========================
-st.title("🚀 TITAN PRO ENGINE")
+st.set_page_config(layout="wide")
 
+st.title("🚀 TITAN PRO ENGINE")
 st.write(f"Spain Time: {spain_time()}")
 
 show("EURUSD=X")
