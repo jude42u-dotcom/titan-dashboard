@@ -3,25 +3,25 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-# ================================
-# 🔐 API KEY (FROM SECRETS)
-# ================================
-API_KEY = st.secrets.get("TWELVEDATA_API_KEY", None)
+# =========================
+# 🔐 API KEY
+# =========================
+API_KEY = st.secrets.get("TWELVEDATA_API_KEY")
 
 if not API_KEY:
     st.error("API KEY MISSING — ADD IN STREAMLIT SECRETS")
     st.stop()
 
-# ================================
-# 📊 DATA FETCH (STABLE VERSION)
-# ================================
+# =========================
+# 📊 DATA FETCH (FINAL FIXED)
+# =========================
 def get_data(symbol):
     try:
         url = "https://api.twelvedata.com/time_series"
 
         params = {
-            "symbol": symbol,
-            "interval": "15min",
+            "symbol": symbol,          # MUST be EUR/USD format
+            "interval": "5min",
             "outputsize": 100,
             "apikey": API_KEY
         }
@@ -29,99 +29,95 @@ def get_data(symbol):
         response = requests.get(url, params=params)
         data = response.json()
 
-        # Handle API error
+        # Handle API errors clearly
         if "status" in data and data["status"] == "error":
             st.error(f"{symbol} API ERROR: {data.get('message')}")
             return None
 
         if "values" not in data:
-            st.error(f"{symbol}: No data returned")
             return None
 
         df = pd.DataFrame(data["values"])
 
-        # Convert safely
-        df = df.apply(pd.to_numeric, errors='coerce')
+        # Convert safely (NO crashes)
+        for col in ["open", "high", "low", "close"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        # Drop bad rows
         df = df.dropna()
 
         if df.empty:
-            st.warning(f"{symbol}: No valid data after cleaning")
             return None
 
         return df
 
     except Exception as e:
-        st.error(f"{symbol} DATA ERROR: {e}")
+        st.error(f"{symbol}: Data fetch failed")
         return None
 
 
-# ================================
-# 🧠 TITAN STRUCTURE ENGINE (LIGHT VERSION)
-# ================================
+# =========================
+# ⚙️ TITAN ENGINE (STABLE BASE)
+# =========================
 def titan_engine(df):
-    last_price = df["close"].iloc[0]
+    last = df.iloc[0]
 
-    high = df["high"].max()
-    low = df["low"].min()
+    high = last["high"]
+    low = last["low"]
+    close = last["close"]
 
     midpoint = (high + low) / 2
 
-    # Basic structural zones
-    sell_zone = (high * 0.999, high)
-    buy_zone = (low, low * 1.001)
-
-    # Targets
-    t1 = midpoint
-    t2 = low
-    t3 = low - (high - low) * 0.25
-
     return {
-        "last_price": last_price,
-        "sell_zone": sell_zone,
-        "buy_zone": buy_zone,
-        "t1": t1,
-        "t2": t2,
-        "t3": t3,
-        "high": high,
-        "low": low
+        "sell_low": round(high - 0.0003, 5),
+        "sell_high": round(high, 5),
+        "buy_low": round(low, 5),
+        "buy_high": round(low + 0.0003, 5),
+        "inv_up": round(high + 0.0001, 5),
+        "inv_down": round(low - 0.0001, 5),
+        "t1": round(midpoint, 5),
+        "t2": round(midpoint - 0.0003, 5),
+        "t3": round(midpoint - 0.0006, 5),
     }
 
 
-# ================================
-# 🎯 DISPLAY BLOCK (TITAN STYLE)
-# ================================
-def display_pair(pair):
-    df = get_data(pair)
+# =========================
+# 📺 DISPLAY
+# =========================
+def display_pair(symbol):
+    df = get_data(symbol)
 
     if df is None:
-        st.warning(f"{pair}: Data unavailable")
+        st.warning(f"{symbol}: Data unavailable")
         return
 
     result = titan_engine(df)
 
-    st.markdown(f"## 🔵 {pair}")
+    st.subheader(f"🔵 {symbol}")
 
     st.write("🟡 Macro Bias: Structural environment")
     st.write("🟡 Regime Expectation: HFL 58% (HIGH first)")
     st.write("🟡 Session Model: Asia → London → NY")
 
-    st.write(f"🔴 PRIMARY SELL ZONE: {round(result['sell_zone'][0],5)} – {round(result['sell_zone'][1],5)}")
-    st.write(f"🟢 ALTERNATE BUY: {round(result['buy_zone'][0],5)} – {round(result['buy_zone'][1],5)}")
+    st.write(f"🔴 PRIMARY SELL ZONE: 🟣 {result['sell_low']} – {result['sell_high']}")
+    st.write(f"🟢 ALTERNATE BUY: 🟣 {result['buy_low']} – {result['buy_high']}")
 
-    st.write(f"🟡 Invalidation Up: {round(result['high'],5)}")
-    st.write(f"🟡 Invalidation Down: {round(result['low'],5)}")
+    st.write(f"🟡 Invalidation Up: 🟣 {result['inv_up']}")
+    st.write(f"🟡 Invalidation Down: 🟣 {result['inv_down']}")
 
     st.write("🟡 Continuation Targets (HIGH first):")
-    st.write(f"T1: {round(result['t1'],5)}")
-    st.write(f"T2: {round(result['t2'],5)}")
-    st.write(f"T3: {round(result['t3'],5)}")
+    st.write(f"T1: 🟣 {result['t1']}")
+    st.write(f"T2: 🟣 {result['t2']}")
+    st.write(f"T3: 🟣 {result['t3']}")
 
-    st.write("🟡 London Windows: 08:10–09:40 / 10:30–11:50")
-    st.write("🟡 NY Window: 14:30–15:45")
+    st.write("🟡 Continuation Targets (LOW first):")
+    st.write(f"T1: 🟣 {result['t1']}")
+    st.write(f"T2: 🟣 {result['t2']}")
+    st.write(f"T3: 🟣 {result['t3']}")
 
-    st.write("🟡 Confluence Score: 50 / 100")
+    st.write("🟠 London Windows: 🟣 08:10–09:40 🟣 10:30–11:50")
+    st.write("🟠 NY Window: 🟣 14:30–15:45")
+
+    st.write("🟡 Confluence Score: 🟣 50 / 100")
 
     st.write("🟡 TRSE OUTPUT:")
     st.write("Regime: RES")
@@ -131,16 +127,16 @@ def display_pair(pair):
     st.divider()
 
 
-# ================================
+# =========================
 # 🚀 MAIN APP
-# ================================
+# =========================
 st.title("🚀 TITAN ENGINE")
 
 spain_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 st.write(f"Spain Time: {spain_time}")
 
-# Run pairs
-pairs = ["EURUSD", "GBPUSD"]
+# IMPORTANT: TwelveData FOREX FORMAT
+pairs = ["EUR/USD", "GBP/USD"]
 
 for pair in pairs:
     display_pair(pair)
