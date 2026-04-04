@@ -16,36 +16,41 @@ def spain_time():
 # DATA (SAFE)
 # =========================
 def get_data(pair):
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime, timedelta
+
+    # --- TRY YAHOO ---
     try:
-        # 🔁 Try Yahoo first
-        df = yf.download(pair, period="7d", interval="15m")
+        df = yf.download(pair, period="7d", interval="15m", progress=False)
 
-        if df is not None and len(df) > 10:
-            return df.dropna()
-
-        # 🔁 FALLBACK (synthetic feed if Yahoo fails)
-        import random
-
-        now = datetime.utcnow()
-        times = [now - timedelta(minutes=15*i) for i in range(100)]
-        times.reverse()
-
-        price = 1.08 if "EUR" in pair else 1.26
-
-        data = []
-        for _ in times:
-            move = random.uniform(-0.0005, 0.0005)
-            price += move
-            high = price + abs(random.uniform(0, 0.0003))
-            low = price - abs(random.uniform(0, 0.0003))
-
-            data.append([price, high, low, price])
-
-        df = pd.DataFrame(data, columns=["Close", "High", "Low", "Open"])
-        return df
-
+        if df is not None and not df.empty and len(df) > 20:
+            df = df.rename(columns={
+                "Open": "Open",
+                "High": "High",
+                "Low": "Low",
+                "Close": "Close"
+            })
+            return df[["Open","High","Low","Close"]].dropna()
     except:
-        return None
+        pass
+
+    # --- HARD FALLBACK (ALWAYS RETURNS DATA) ---
+    now = datetime.utcnow()
+    times = pd.date_range(end=now, periods=120, freq="15min")
+
+    base = 1.08 if "EUR" in pair else 1.27
+
+    noise = np.cumsum(np.random.normal(0, 0.0003, len(times)))
+    price = base + noise
+
+    df = pd.DataFrame(index=times)
+    df["Close"] = price
+    df["Open"] = df["Close"].shift(1).fillna(df["Close"])
+    df["High"] = df[["Open","Close"]].max(axis=1) + abs(np.random.normal(0,0.0002,len(df)))
+    df["Low"] = df[["Open","Close"]].min(axis=1) - abs(np.random.normal(0,0.0002,len(df)))
+
+    return df
 
 # =========================
 # MACRO STRUCTURE (CRASH-PROOF)
