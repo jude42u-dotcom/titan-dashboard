@@ -1,223 +1,233 @@
-import streamlit as st
 import pandas as pd
-import requests
+import numpy as np
 from datetime import datetime, timedelta
 
-# ==============================
-# API KEY
-# ==============================
-API_KEY = st.secrets.get("TWELVEDATA_API_KEY")
+# =========================================
+# TRSE ENGINE (ROTATIONAL STATE)
+# =========================================
+def trse_engine(df):
 
-if not API_KEY:
-    st.error("API KEY MISSING — add TWELVEDATA_API_KEY in Streamlit secrets")
-    st.stop()
+    df["time"] = pd.to_datetime(df["time"])
+    df["date"] = df["time"].dt.date
 
-# ==============================
-# DATA FETCH
-# ==============================
-def get_data(symbol):
-    try:
-        url = "https://api.twelvedata.com/time_series"
+    daily = df.groupby("date").agg({
+        "high": "max",
+        "low": "min",
+        "close": "last"
+    }).reset_index()
 
-        params = {
-            "symbol": symbol,
-            "interval": "15min",
-            "outputsize": 500,
-            "apikey": API_KEY
-        }
+    if len(daily) < 5:
+        return {"regime": "UNKNOWN", "delay": 0, "expectation": "None"}
 
-        r = requests.get(url, params=params)
-        data = r.json()
+    # Detect compression / expansion
+    ranges = daily["high"] - daily["low"]
+    recent = ranges.tail(3)
 
-        if "values" not in data:
-            st.error(f"{symbol} API ERROR: {data}")
-            return None
+    compression = recent.max() < ranges.mean()
+    expansion = recent.iloc[-1] > recent.mean()
 
-        df = pd.DataFrame(data["values"])
+    # Delay day logic (PDF style)
+    delay = 0
+    for i in range(len(ranges)-1, 0, -1):
+        if ranges.iloc[i] < ranges.iloc[i-1]:
+            delay += 1
+        else:
+            break
 
-        df = df.rename(columns={
-            "datetime": "time",
-            "open": "open",
-            "high": "high",
-            "low": "low",
-            "close": "close"
-        })
-
-        df["time"] = pd.to_datetime(df["time"], errors="coerce")
-        df = df.dropna(subset=["time"])
-
-        df = df.sort_values("time")
-
-        df[["open","high","low","close"]] = df[["open","high","low","close"]].astype(float)
-
-        return df
-
-    except Exception as e:
-        st.error(f"DATA ERROR: {e}")
-        return None
-
-# ==============================
-# TITAN ENGINE (STABLE BASE)
-# ==============================
-def titan_engine(df):
-    if df is None or len(df) < 50:
-        return None
-
-    df = df.copy()
-
-    # ==============================
-    # TIME SAFE FIX (CRITICAL)
-    # ==============================
-    df["time"] = pd.to_datetime(df["time"], errors="coerce")
-    df = df.dropna(subset=["time"])
-
-    df["hour"] = df["time"].dt.hour
-
-    # ==============================
-    # SESSION SPLIT
-    # ==============================
-    asia = df[(df["hour"] >= 0) & (df["hour"] < 8)]
-    london = df[(df["hour"] >= 8) & (df["hour"] < 13)]
-
-    if asia.empty or london.empty:
-        return None
-
-    asia_high = asia["high"].max()
-    asia_low = asia["low"].min()
-
-    london_high = london["high"].max()
-    london_low = london["low"].min()
-
-    # ==============================
-    # FIRST EXTREME
-    # ==============================
-    if london_high > asia_high:
-        first = "HIGH"
-    elif london_low < asia_low:
-        first = "LOW"
+    # Regime classification
+    if compression:
+        regime = f"RDS Day {min(delay,5)}"
+        expectation = "Rotation"
+    elif expansion:
+        regime = "EXPANSION"
+        expectation = "Trend continuation"
     else:
-        first = "RANGE"
+        regime = "TRANSITION"
+        expectation = "Mixed"
 
-    # ==============================
+    return {
+        "regime": regime,
+        "delay": delay,
+        "expectation": expectation
+    }
+
+
+# =========================================
+# WEEKLY COMPRESSION (MACRO BIAS)
+# =========================================
+def weekly_bias(df):
+
+    df["time"] = pd.to_datetime(df["time"])
+    df["week"] = df["time"].dt.isocalendar().week
+
+    weekly = df.groupby("week").agg({
+        "high": "max",
+        "low": "min",
+        "close": "last"
+    }).reset_index()
+
+    if len(weekly) < 3:
+        return "Structural environment"
+
+    last = weekly.iloc[-1]
+    prev = weekly.iloc[-2]
+
+    lower_high = last["high"] < prev["high"]
+    higher_low = last["low"] > prev["low"]
+
+    if lower_high:
+        return "Weekly compression → lower highs (bearish pressure)"
+    elif higher_low:
+        return "Weekly compression → higher lows (bullish pressure)"
+    else:
+        return "Expansion structure"
+
+
+# =========================================
+# SESSION IDENTITY (PDF FLOW)
+# =========================================
+def session_model(df):
+
+    df["time"] = pd.to_datetime(df["time"])
+    today = df["time"].dt.date.iloc[-1]
+
+    asia = df[(df["time"].dt.hour >= 0) & (df["time"].dt.hour < 7)]
+    london = df[(df["time"].dt.hour >= 7) & (df["time"].dt.hour < 13)]
+
+    if len(asia) < 5 or len(london) < 5:
+        return "Standard flow"
+
+    asia_range = asia["high"].max() - asia["low"].min()
+    london_range = london["high"].max() - london["low"].min()
+
+    if london_range > asia_range * 1.5:
+        return "London expansion → continuation"
+    elif london_range < asia_range:
+        return "Asia drift → London trap → NY resolution"
+    else:
+        return "Balanced session flow"
+
+
+# =========================================
+# TITAN CORE (FIXED GEOMETRY)
+# =========================================
+def titan_core(df):
+
+    df["time"] = pd.to_datetime(df["time"])
+    df = df.sort_values("time")
+
+    now = df["time"].iloc[-1]
+    today = now.date()
+
+    asia_df = df[(df["time"].dt.hour >= 0) & (df["time"].dt.hour < 7)]
+
+    if len(asia_df) < 10:
+        return None
+
+    asia_high = asia_df["high"].max()
+    asia_low = asia_df["low"].min()
+    asia_mid = (asia_high + asia_low) / 2
+
+    anchor = asia_mid
+    asia_range = asia_high - asia_low
+
+    if asia_range < 0.0005:
+        asia_range = 0.0005
+
+    root = np.sqrt(anchor)
+    step = asia_range / root
+
+    # GANN LEVELS
+    g1 = (root + step) ** 2
+    g2 = (root + 2*step) ** 2
+    g3 = (root + 3*step) ** 2
+
+    g_1 = (root - step) ** 2
+    g_2 = (root - 2*step) ** 2
+    g_3 = (root - 3*step) ** 2
+
+    # CAP (DEM)
+    max_ext = asia_range * 2.2
+
+    def cap(x):
+        return max(min(x, anchor + max_ext), anchor - max_ext)
+
+    g1, g2, g3 = cap(g1), cap(g2), cap(g3)
+    g_1, g_2, g_3 = cap(g_1), cap(g_2), cap(g_3)
+
     # REGIME
-    # ==============================
-    if first == "HIGH":
+    last = df.iloc[-1]
+
+    if abs(last["high"] - asia_high) > abs(last["low"] - asia_low):
         regime = "HFL"
-    elif first == "LOW":
-        regime = "LFHL"
     else:
-        regime = "RANGE"
+        regime = "LFL"
 
-    # ==============================
-    # GANN BASE (SAFE VERSION)
-    # ==============================
-    last_close = df.iloc[-1]["close"]
-
-    root = last_close ** 0.5
-
-    gann_up = (root + 0.125) ** 2
-    gann_down = (root - 0.125) ** 2
-
-    # ==============================
     # ZONES
-    # ==============================
-    sell_low = round(gann_up, 5)
-    sell_high = round(gann_up + 0.0003, 5)
+    sell_zone = (g1, g2)
+    buy_zone = (g_2, g_1)
 
-    buy_low = round(gann_down, 5)
-    buy_high = round(gann_down + 0.0003, 5)
-
-    inv_up = round(gann_up + 0.0006, 5)
-    inv_down = round(gann_down - 0.0006, 5)
-
-    # ==============================
     # TARGETS
-    # ==============================
-    t1 = round(last_close, 5)
-
-    if regime == "LFHL":
-        t2 = round(gann_down, 5)
-        t3 = round(gann_up, 5)
+    if regime == "HFL":
+        targets = [g_1, g_2, g_3]
     else:
-        t2 = round(gann_up, 5)
-        t3 = round(gann_down, 5)
+        targets = [g1, g2, g3]
 
-    # ==============================
-    # CONFLUENCE SCORE
-    # ==============================
-    score = 0
+    return {
+        "regime": regime,
+        "sell_zone": sell_zone,
+        "buy_zone": buy_zone,
+        "targets": targets,
+        "asia_high": asia_high,
+        "asia_low": asia_low,
+        "range": asia_range
+    }
 
-    if first != "RANGE":
-        score += 30
 
-    if abs(london_high - asia_high) > 0.0005 or abs(london_low - asia_low) > 0.0005:
-        score += 20
+# =========================================
+# FINAL TITAN ENGINE (FULL STACK)
+# =========================================
+def titan_engine(df):
 
-    if regime != "RANGE":
-        score += 20
+    core = titan_core(df)
+    if core is None:
+        return None
 
-    if abs(last_close - gann_up) < 0.001 or abs(last_close - gann_down) < 0.001:
-        score += 30
+    trse = trse_engine(df)
+    macro = weekly_bias(df)
+    session = session_model(df)
+
+    # INVALIDATION
+    invalid_up = core["asia_high"] + core["range"] * 0.3
+    invalid_down = core["asia_low"] - core["range"] * 0.3
+
+    # WINDOWS
+    london_windows = "08:30–09:30 / 11:00–12:30"
+    ny_window = "14:30–16:00"
+
+    # SCORE (FULL CONFLUENCE)
+    score = 50
+
+    if "compression" in macro:
+        score += 10
+    if core["regime"] == "HFL":
+        score += 10
+    if trse["delay"] >= 2:
+        score += 10
 
     score = min(score, 100)
 
     return {
-        "regime": regime,
-        "sell": (sell_low, sell_high),
-        "buy": (buy_low, buy_high),
-        "inv_up": inv_up,
-        "inv_down": inv_down,
-        "t1": t1,
-        "t2": t2,
-        "t3": t3,
-        "score": score
-    }
-
-# ==============================
-# DISPLAY
-# ==============================
-def display_pair(symbol):
-
-    df = get_data(symbol)
-
-    if df is None:
-        st.warning(f"{symbol}: Data unavailable")
-        return
-
-    result = titan_engine(df)
-
-    if result is None:
-        st.warning(f"{symbol}: Engine failed")
-        return
-
-    st.subheader(symbol)
-
-    st.write(f"Regime: {result['regime']}")
-
-    st.write(f"SELL: {result['sell'][0]} – {result['sell'][1]}")
-    st.write(f"BUY: {result['buy'][0]} – {result['buy'][1]}")
-
-    st.write(f"Invalidation Up: {result['inv_up']}")
-    st.write(f"Invalidation Down: {result['inv_down']}")
-
-    st.write("Targets:")
-    st.write(f"T1: {result['t1']}")
-    st.write(f"T2: {result['t2']}")
-    st.write(f"T3: {result['t3']}")
-
-    st.write(f"Confluence Score: {result['score']} / 100")
-
-    st.write("---")
-
-# ==============================
-# MAIN
-# ==============================
-st.title("TITAN ENGINE V3")
-
-spain_time = datetime.utcnow() + timedelta(hours=2)
-st.write(f"Spain Time: {spain_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-pairs = ["EUR/USD", "GBP/USD"]
-
-for pair in pairs:
-    display_pair(pair)
+        "macro": macro,
+        "session": session,
+        "regime": core["regime"],
+        "sell_zone": core["sell_zone"],
+        "buy_zone": core["buy_zone"],
+        "targets": core["targets"],
+        "invalid_up": invalid_up,
+        "invalid_down": invalid_down,
+        "london_windows": london_windows,
+        "ny_window": ny_window,
+        "score": score,
+        "trse": trse
+        }
