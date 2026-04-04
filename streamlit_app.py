@@ -1,15 +1,20 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import yfinance as yf
-from datetime import datetime, timedelta
+import requests
+from datetime import datetime
 import pytz
+
+# =========================
+# CONFIG
+# =========================
+API_KEY = "YOUR_TWELVEDATA_API_KEY"  # 🔴 PUT YOUR KEY HERE
+MIN_ROWS = 50
 
 # =========================
 # FORMAT
 # =========================
 def fmt(x):
-    return f"{x:.5f}"
+    return f"{float(x):.5f}"
 
 # =========================
 # TIME
@@ -18,56 +23,91 @@ def spain_time():
     return datetime.now(pytz.timezone("Europe/Madrid"))
 
 # =========================
-# DATA (NEVER FAILS)
+# DATA (TWELVEDATA)
 # =========================
-def get_data(pair):
+def get_data(symbol="EUR/USD", interval="15min"):
+
+    url = "https://api.twelvedata.com/time_series"
+
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "outputsize": 100,
+        "apikey": API_KEY
+    }
 
     try:
-        df = yf.download(pair, period="7d", interval="15m", progress=False)
+        r = requests.get(url, params=params)
+        data = r.json()
 
-        if df is not None and not df.empty and len(df) > 50:
-            return df
+        if "values" not in data:
+            return None
+
+        df = pd.DataFrame(data["values"])
+
+        df.rename(columns={
+            "datetime": "time",
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close"
+        }, inplace=True)
+
+        df["time"] = pd.to_datetime(df["time"])
+        df.set_index("time", inplace=True)
+
+        df = df.astype(float)
+        df = df.sort_index()
+
+        return df
 
     except:
-        pass
-
-    # 🔒 FALLBACK
-    now = datetime.utcnow()
-    times = pd.date_range(end=now, periods=200, freq="15min")
-
-    base = 1.08 if "EUR" in pair else 1.27
-
-    noise = np.cumsum(np.random.normal(0, 0.0004, len(times)))
-    price = base + noise
-
-    df = pd.DataFrame(index=times)
-    df["Close"] = price
-    df["Open"] = df["Close"].shift(1).fillna(df["Close"])
-    df["High"] = df[["Open","Close"]].max(axis=1) + abs(np.random.normal(0,0.0003,len(df)))
-    df["Low"] = df[["Open","Close"]].min(axis=1) - abs(np.random.normal(0,0.0003,len(df)))
-
-    return df
+        return None
 
 # =========================
-# TITAN CORE (FIXED)
+# VALIDATION LAYER
+# =========================
+def validate(df):
+
+    if df is None or df.empty:
+        return False, "NO DATA"
+
+    if len(df) < MIN_ROWS:
+        return False, "INSUFFICIENT DATA"
+
+    if df.isnull().any().any():
+        return False, "NaN FOUND"
+
+    if (df["High"] < df["Low"]).any():
+        return False, "INVALID HIGH/LOW"
+
+    if df.index.duplicated().any():
+        return False, "DUPLICATES"
+
+    # time continuity check
+    expected = pd.Timedelta(minutes=15)
+    diffs = df.index.to_series().diff().dropna()
+
+    if not (diffs == expected).all():
+        return False, "TIME GAPS"
+
+    return True, "OK"
+
+# =========================
+# TITAN CORE (UNCHANGED LOGIC)
 # =========================
 def titan(df):
 
-    if df is None or len(df) < 20:
-        raise ValueError("Not enough data")
-
     highs = df["High"]
     lows = df["Low"]
-    close = float(df["Close"].iloc[-1])
+    close = df["Close"].iloc[-1]
 
-    # RANGE
-    recent_high = float(highs.iloc[-20:].max())
-    recent_low = float(lows.iloc[-20:].min())
-    R = float(recent_high - recent_low)
+    recent_high = highs.iloc[-20:].max()
+    recent_low = lows.iloc[-20:].min()
+    R = recent_high - recent_low
 
-    # 🔒 FIXED REGIME LOGIC
-    current_range = float(highs.iloc[-1] - lows.iloc[-1])
-    avg_range = float((highs - lows).iloc[-20:].mean())
+    current_range = highs.iloc[-1] - lows.iloc[-1]
+    avg_range = (highs - lows).iloc[-20:].mean()
 
     if current_range < avg_range:
         regime = "HFL (HIGH first)"
@@ -76,43 +116,31 @@ def titan(df):
         regime = "LFHL (LOW first)"
         bias = "BUY"
 
-    # ZONES
-    sell_zone = (
-        float(recent_high - 0.2 * R),
-        float(recent_high)
-    )
+    sell_zone = (recent_high - 0.2 * R, recent_high)
+    buy_zone = (recent_low, recent_low + 0.2 * R)
 
-    buy_zone = (
-        float(recent_low),
-        float(recent_low + 0.2 * R)
-    )
+    inv_up = recent_high
+    inv_down = recent_low
 
-    # INVALIDATION
-    inv_up = float(recent_high)
-    inv_down = float(recent_low)
-
-    # TARGETS
     if bias == "SELL":
-        t1 = float(close - 0.5 * R)
-        t2 = float(close - 1.0 * R)
-        t3 = float(close - 1.5 * R)
+        t1 = close - 0.5 * R
+        t2 = close - 1.0 * R
+        t3 = close - 1.5 * R
 
-        alt_t1 = float(close + 0.5 * R)
-        alt_t2 = float(close + 1.0 * R)
-        alt_t3 = float(close + 1.5 * R)
-
+        alt_t1 = close + 0.5 * R
+        alt_t2 = close + 1.0 * R
+        alt_t3 = close + 1.5 * R
     else:
-        t1 = float(close + 0.5 * R)
-        t2 = float(close + 1.0 * R)
-        t3 = float(close + 1.5 * R)
+        t1 = close + 0.5 * R
+        t2 = close + 1.0 * R
+        t3 = close + 1.5 * R
 
-        alt_t1 = float(close - 0.5 * R)
-        alt_t2 = float(close - 1.0 * R)
-        alt_t3 = float(close - 1.5 * R)
+        alt_t1 = close - 0.5 * R
+        alt_t2 = close - 1.0 * R
+        alt_t3 = close - 1.5 * R
 
     return {
         "regime": regime,
-        "bias": bias,
         "sell_zone": sell_zone,
         "buy_zone": buy_zone,
         "inv_up": inv_up,
@@ -126,77 +154,46 @@ def titan(df):
     }
 
 # =========================
-# TIME WINDOWS
+# DISPLAY WRAPPER (CRITICAL)
 # =========================
-def time_windows():
+def run(symbol):
 
-    base = spain_time().replace(hour=0, minute=0, second=0, microsecond=0)
+    st.header(symbol)
 
-    return [
-        (base + timedelta(hours=8, minutes=30), base + timedelta(hours=10)),
-        (base + timedelta(hours=11, minutes=30), base + timedelta(hours=13)),
-        (base + timedelta(hours=14, minutes=30), base + timedelta(hours=16, minutes=30)),
-    ]
+    df = get_data(symbol)
 
-# =========================
-# TRSE
-# =========================
-def trse():
-    return {
-        "regime": "RDS Day 3",
-        "delay": 3,
-        "next": "Rotation Expected"
-    }
+    valid, reason = validate(df)
 
-# =========================
-# DISPLAY
-# =========================
-def show(pair):
+    if not valid:
+        st.error(f"DATA REJECTED: {reason}")
+        return
 
-    st.header(pair)
+    r = titan(df)
 
-    try:
-        df = get_data(pair)
-        r = titan(df)
+    st.write(f"🟡 Regime: {r['regime']}")
 
-        st.write(f"🟡 Regime Expectation: 🔴 {r['regime']}")
+    st.write(f"🔴 SELL ZONE: {fmt(r['sell_zone'][0])} – {fmt(r['sell_zone'][1])}")
+    st.write(f"🟢 BUY ZONE: {fmt(r['buy_zone'][0])} – {fmt(r['buy_zone'][1])}")
 
-        st.write(f"🔴 PRIMARY SELL ZONE: {fmt(r['sell_zone'][0])} – {fmt(r['sell_zone'][1])}")
-        st.write(f"🟢 ALTERNATE BUY: {fmt(r['buy_zone'][0])} – {fmt(r['buy_zone'][1])}")
+    st.write(f"Invalidation Up: {fmt(r['inv_up'])}")
+    st.write(f"Invalidation Down: {fmt(r['inv_down'])}")
 
-        st.write(f"🟡 Invalidation Up: {fmt(r['inv_up'])}")
-        st.write(f"🟡 Invalidation Down: {fmt(r['inv_down'])}")
+    st.write("Targets (Primary):")
+    st.write(f"T1: {fmt(r['t1'])}")
+    st.write(f"T2: {fmt(r['t2'])}")
+    st.write(f"T3: {fmt(r['t3'])}")
 
-        st.write("🟡 Continuation Targets (PRIMARY):")
-        st.write(f"T1: {fmt(r['t1'])}")
-        st.write(f"T2: {fmt(r['t2'])}")
-        st.write(f"T3: {fmt(r['t3'])}")
-
-        st.write("🟡 Continuation Targets (ALTERNATE):")
-        st.write(f"T1: {fmt(r['alt_t1'])}")
-        st.write(f"T2: {fmt(r['alt_t2'])}")
-        st.write(f"T3: {fmt(r['alt_t3'])}")
-
-        st.write("🟠 Time Windows (Spain):")
-        for w in time_windows():
-            st.write(f"{w[0].strftime('%H:%M')} – {w[1].strftime('%H:%M')}")
-
-        t = trse()
-        st.write("🟡 TRSE OUTPUT:")
-        st.write(f"Regime: {t['regime']}")
-        st.write(f"Delay Day Count: {t['delay']}")
-        st.write(f"Next-Day Expectation: {t['next']}")
-
-    except Exception as e:
-        st.error("Engine error")
-        st.write(str(e))
+    st.write("Targets (Alternate):")
+    st.write(f"T1: {fmt(r['alt_t1'])}")
+    st.write(f"T2: {fmt(r['alt_t2'])}")
+    st.write(f"T3: {fmt(r['alt_t3'])}")
 
 # =========================
 # APP
 # =========================
-st.title("🚀 TITAN PRO ENGINE")
+st.title("🚀 TITAN PRO ENGINE (STABLE BUILD)")
 
 st.write(f"Spain Time: {spain_time()}")
 
-show("EURUSD=X")
-show("GBPUSD=X")
+run("EUR/USD")
+run("GBP/USD")
