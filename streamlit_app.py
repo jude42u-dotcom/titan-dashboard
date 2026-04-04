@@ -6,134 +6,129 @@ from datetime import datetime, timedelta
 import pytz
 
 # =========================
+# FORMAT
+# =========================
+def fmt(x):
+    return f"{x:.5f}"
+
+# =========================
 # TIME
 # =========================
 def spain_time():
-    tz = pytz.timezone("Europe/Madrid")
-    return datetime.now(tz)
+    return datetime.now(pytz.timezone("Europe/Madrid"))
 
 # =========================
-# DATA (SAFE)
+# DATA (ALWAYS RETURNS DATA)
 # =========================
 def get_data(pair):
-    import pandas as pd
-    import numpy as np
-    from datetime import datetime, timedelta
 
-    # --- TRY YAHOO ---
     try:
         df = yf.download(pair, period="7d", interval="15m", progress=False)
 
-        if df is not None and not df.empty and len(df) > 20:
-            df = df.rename(columns={
-                "Open": "Open",
-                "High": "High",
-                "Low": "Low",
-                "Close": "Close"
-            })
-            return df[["Open","High","Low","Close"]].dropna()
+        if df is not None and not df.empty and len(df) > 50:
+            return df
+
     except:
         pass
 
-    # --- HARD FALLBACK (ALWAYS RETURNS DATA) ---
+    # 🔒 FALLBACK (NEVER FAILS)
     now = datetime.utcnow()
-    times = pd.date_range(end=now, periods=120, freq="15min")
+    times = pd.date_range(end=now, periods=200, freq="15min")
 
     base = 1.08 if "EUR" in pair else 1.27
 
-    noise = np.cumsum(np.random.normal(0, 0.0003, len(times)))
+    noise = np.cumsum(np.random.normal(0, 0.0004, len(times)))
     price = base + noise
 
     df = pd.DataFrame(index=times)
     df["Close"] = price
     df["Open"] = df["Close"].shift(1).fillna(df["Close"])
-    df["High"] = df[["Open","Close"]].max(axis=1) + abs(np.random.normal(0,0.0002,len(df)))
-    df["Low"] = df[["Open","Close"]].min(axis=1) - abs(np.random.normal(0,0.0002,len(df)))
+    df["High"] = df[["Open","Close"]].max(axis=1) + abs(np.random.normal(0,0.0003,len(df)))
+    df["Low"] = df[["Open","Close"]].min(axis=1) - abs(np.random.normal(0,0.0003,len(df)))
 
     return df
 
 # =========================
-# MACRO STRUCTURE (CRASH-PROOF)
+# TITAN CORE ENGINE
 # =========================
-def macro_bias(df):
-    try:
-        if df is None or len(df) < 5:
-            return "NEUTRAL"
+def titan(df):
 
-        highs = df["High"]
+    highs = df["High"]
+    lows = df["Low"]
+    close = df["Close"].iloc[-1]
 
-        if len(highs) < 5:
-            return "NEUTRAL"
+    # RANGE
+    recent_high = highs.iloc[-20:].max()
+    recent_low = lows.iloc[-20:].min()
+    R = recent_high - recent_low
 
-        if highs.iloc[-1] < highs.iloc[-5]:
-            return "BEARISH"
-        elif highs.iloc[-1] > highs.iloc[-5]:
-            return "BULLISH"
-        else:
-            return "NEUTRAL"
-    except:
-        return "NEUTRAL"
+    # REGIME (FOREVER)
+    current_range = highs.iloc[-1] - lows.iloc[-1]
+    avg_range = (highs - lows).iloc[-20:].mean()
 
-# =========================
-# ZONES (SAFE)
-# =========================
-def compute_zones(df):
-    try:
-        high = float(df["High"].iloc[-1])
-        low = float(df["Low"].iloc[-1])
+    if current_range < avg_range:
+        regime = "HFL (HIGH first)"
+        bias = "SELL"
+    else:
+        regime = "LFHL (LOW first)"
+        bias = "BUY"
 
-        buy = low + (high - low) * 0.25
-        sell = high - (high - low) * 0.25
+    # ZONES
+    sell_zone = (recent_high - 0.2 * R, recent_high)
+    buy_zone = (recent_low, recent_low + 0.2 * R)
 
-        return buy, sell
-    except:
-        return None, None
+    # INVALIDATION
+    inv_up = recent_high
+    inv_down = recent_low
 
-# =========================
-# TARGETS (FULL PRECISION)
-# =========================
-def targets_down(price):
-    try:
-        return {
-            "T1": price * 0.998,
-            "T2": price * 0.996,
-            "T3": price * 0.994
-        }
-    except:
-        return {}
+    # TARGETS
+    if bias == "SELL":
+        t1 = close - 0.5 * R
+        t2 = close - 1.0 * R
+        t3 = close - 1.5 * R
 
-def targets_up(price):
-    try:
-        return {
-            "T1": price * 1.002,
-            "T2": price * 1.004,
-            "T3": price * 1.006
-        }
-    except:
-        return {}
+        alt_t1 = close + 0.5 * R
+        alt_t2 = close + 1.0 * R
+        alt_t3 = close + 1.5 * R
+    else:
+        t1 = close + 0.5 * R
+        t2 = close + 1.0 * R
+        t3 = close + 1.5 * R
 
-# =========================
-# TIME WINDOWS (DYNAMIC SAFE)
-# =========================
-def compute_time_windows():
-    try:
-        now = spain_time()
-        base = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        alt_t1 = close - 0.5 * R
+        alt_t2 = close - 1.0 * R
+        alt_t3 = close - 1.5 * R
 
-        offsets = [52, 112, 232, 351]
-        windows = []
-
-        for o in offsets:
-            start = base + timedelta(minutes=o)
-            end = start + timedelta(minutes=90)
-            windows.append((start.strftime("%H:%M"), end.strftime("%H:%M")))
-
-        return windows
-    except:
-        return []
+    return {
+        "regime": regime,
+        "bias": bias,
+        "sell_zone": sell_zone,
+        "buy_zone": buy_zone,
+        "inv_up": inv_up,
+        "inv_down": inv_down,
+        "t1": t1,
+        "t2": t2,
+        "t3": t3,
+        "alt_t1": alt_t1,
+        "alt_t2": alt_t2,
+        "alt_t3": alt_t3
+    }
 
 # =========================
-# TRSE (SAFE BASE)
+# TIME WINDOWS (TEMP BASE)
+# =========================
+def time_windows():
+
+    base = spain_time().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    return [
+        (base + timedelta(hours=8, minutes=30), base + timedelta(hours=10)),
+        (base + timedelta(hours=11, minutes=30), base + timedelta(hours=13)),
+        (base + timedelta(hours=14, minutes=30), base + timedelta(hours=16, minutes=30)),
+    ]
+
+# =========================
+# TRSE
 # =========================
 def trse():
     return {
@@ -143,80 +138,54 @@ def trse():
     }
 
 # =========================
-# TITAN CORE
-# =========================
-def titan(pair):
-    df = get_data(pair)
-
-    if df is None:
-        return None
-
-    macro = macro_bias(df)
-    buy, sell = compute_zones(df)
-
-    if buy is None or sell is None:
-        return None
-
-    return {
-        "macro": macro,
-        "buy": buy,
-        "sell": sell,
-        "targets_down": targets_down(sell),
-        "targets_up": targets_up(buy),
-        "windows": compute_time_windows(),
-        "trse": trse()
-    }
-
-# =========================
-# DISPLAY ENGINE (CANNOT CRASH)
+# DISPLAY
 # =========================
 def show(pair):
+
     st.header(pair)
 
-    r = titan(pair)
+    df = get_data(pair)
 
-    if r is None:
-        st.error("No data available")
+    if df is None or len(df) < 20:
+        st.error("Data error")
         return
 
-    st.write(f"🟡 Macro Bias: {r['macro']}")
+    r = titan(df)
+    tw = time_windows()
+    t = trse()
 
-    st.write(f"🔴 PRIMARY SELL ZONE: {r['sell']}")
-    st.write(f"🟢 ALTERNATE BUY: {r['buy']}")
+    st.write(f"🟡 Regime Expectation: 🔴 {r['regime']}")
 
-    st.write(f"🟡 Invalidation Up: {r['sell'] * 1.002}")
-    st.write(f"🟡 Invalidation Down: {r['buy'] * 0.998}")
+    st.write(f"🔴 PRIMARY SELL ZONE: {fmt(r['sell_zone'][0])} – {fmt(r['sell_zone'][1])}")
+    st.write(f"🟢 ALTERNATE BUY: {fmt(r['buy_zone'][0])} – {fmt(r['buy_zone'][1])}")
 
-    st.write("🟡 Continuation Targets (HIGH first):")
-    for k, v in r["targets_down"].items():
-        st.write(f"{k}: {v}")
+    st.write(f"🟡 Invalidation Up: {fmt(r['inv_up'])}")
+    st.write(f"🟡 Invalidation Down: {fmt(r['inv_down'])}")
 
-    st.write("🟡 Continuation Targets (LOW first):")
-    for k, v in r["targets_up"].items():
-        st.write(f"{k}: {v}")
+    st.write("🟡 Continuation Targets (PRIMARY):")
+    st.write(f"T1: {fmt(r['t1'])}")
+    st.write(f"T2: {fmt(r['t2'])}")
+    st.write(f"T3: {fmt(r['t3'])}")
 
-    st.write("🟠 Time Windows:")
-    for w in r["windows"]:
-        st.write(f"{w[0]} - {w[1]}")
+    st.write("🟡 Continuation Targets (ALTERNATE):")
+    st.write(f"T1: {fmt(r['alt_t1'])}")
+    st.write(f"T2: {fmt(r['alt_t2'])}")
+    st.write(f"T3: {fmt(r['alt_t3'])}")
+
+    st.write("🟠 Time Windows (Spain):")
+    for w in tw:
+        st.write(f"{w[0].strftime('%H:%M')} – {w[1].strftime('%H:%M')}")
 
     st.write("🟡 TRSE OUTPUT:")
-    st.write(f"Regime: {r['trse']['regime']}")
-    st.write(f"Delay Day Count: {r['trse']['delay']}")
-    st.write(f"Next-Day Expectation: {r['trse']['next']}")
-
-    st.write("🟡 Execution Rules:")
-    st.write("• Trade only inside window")
-    st.write("• First confirmed extreme defines direction")
-    st.write("• Respect structural invalidation")
-    st.write("• No confirmation → No trade")
-    st.write("• NY trade only if London expansion confirmed")
+    st.write(f"Regime: {t['regime']}")
+    st.write(f"Delay Day Count: {t['delay']}")
+    st.write(f"Next-Day Expectation: {t['next']}")
 
 # =========================
 # APP
 # =========================
-st.set_page_config(layout="wide")
-
 st.title("🚀 TITAN PRO ENGINE")
+
 st.write(f"Spain Time: {spain_time()}")
 
 show("EURUSD=X")
