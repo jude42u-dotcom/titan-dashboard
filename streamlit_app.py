@@ -140,7 +140,7 @@ spain_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 st.write(f"Spain Time: {spain_time}")
 
 # Run pairs
-pairs = ["EUR/USD", "GBP/USD"]
+pairs = ["EURUSD", "GBPUSD"]
 
 for pair in pairs:
     display_pair(pair)
