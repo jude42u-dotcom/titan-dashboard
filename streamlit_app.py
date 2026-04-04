@@ -10,6 +10,24 @@ from datetime import datetime
 API_KEY = "eb11f97c310f407da9961dc7c67a697e"
 
 # ============================================
+# 📅 JENKINS CALENDAR (ADDED)
+# ============================================
+JENKINS_DATES = {
+    "EUR/USD": [
+        ("2026-04-20", "BUY"),
+        ("2026-05-20", "SELL"),
+        ("2026-06-04", "BUY"),
+        ("2026-06-19", "SELL"),
+    ],
+    "GBP/USD": [
+        ("2026-02-06", "SELL"),
+        ("2026-03-08", "BUY"),
+        ("2026-04-07", "SELL"),
+        ("2026-05-07", "BUY"),
+    ]
+}
+
+# ============================================
 # 📡 LOAD DATA (UNCHANGED)
 # ============================================
 @st.cache_data
@@ -109,20 +127,11 @@ def titan_engine(df):
     }
 
 # ============================================
-# 🧠 PDF LAYER (UNCHANGED)
-# ============================================
-def titan_pdf_layer(df):
-    return "PDF LOGIC ACTIVE"
-
-# ============================================
-# 🔥 NEW — GANN TIME PDF (ADDED ONLY)
+# 🔥 GANN TIME (ADDED)
 # ============================================
 def titan_time_pdf(df):
-
     if df is None or df.empty:
         return []
-
-    df = df.sort_values("time")
 
     last_price = float(df["close"].iloc[-1])
     root = np.sqrt(last_price)
@@ -145,14 +154,63 @@ def titan_time_pdf(df):
     return windows
 
 # ============================================
-# 🚀 UI (UNCHANGED + ADDITIONS)
+# 🔥 HARMONIC TIME WINDOWS (ADDED)
+# ============================================
+def calculate_time_windows(df):
+
+    recent = df.tail(100)
+
+    low_anchor = recent.loc[recent["low"].idxmin()]
+    high_anchor = recent.loc[recent["high"].idxmax()]
+
+    low_time = low_anchor["time"]
+    high_time = high_anchor["time"]
+
+    now = df["time"].iloc[-1]
+
+    low_diff = (now - low_time).total_seconds() / 60
+    high_diff = (now - high_time).total_seconds() / 60
+
+    harmonics = [0.125, 0.167, 0.25, 0.333]
+
+    low_windows = []
+    high_windows = []
+
+    for h in harmonics:
+        low_proj = low_time + pd.Timedelta(minutes=low_diff * h)
+        high_proj = high_time + pd.Timedelta(minutes=high_diff * h)
+
+        low_windows.append(low_proj)
+        high_windows.append(high_proj)
+
+    return {
+        "low_windows": low_windows,
+        "high_windows": high_windows
+    }
+
+# ============================================
+# 🔥 JENKINS DETECTOR (ADDED)
+# ============================================
+def get_active_jenkins(pair):
+    today = datetime.now().date()
+
+    active = []
+
+    for date_str, signal in JENKINS_DATES.get(pair, []):
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+
+        if abs((today - d).days) <= 1:
+            active.append((date_str, signal))
+
+    return active
+
+# ============================================
+# 🚀 UI
 # ============================================
 st.set_page_config(layout="wide")
-
 st.title("🚀 TITAN ENGINE V5")
 
-spain_time = datetime.now()
-st.write("Spain Time:", spain_time)
+st.write("Spain Time:", datetime.now())
 
 pairs = ["EUR/USD", "GBP/USD"]
 
@@ -161,17 +219,13 @@ for pair in pairs:
     df = load_data(pair)
 
     if df.empty:
-        st.warning(f"{pair} data not loaded")
         continue
 
     result = titan_engine(df)
-    pdf = titan_pdf_layer(df)
 
-    # ✅ ADDED
     time_pdf = titan_time_pdf(df)
-
-    if result is None:
-        continue
+    harmonic = calculate_time_windows(df)
+    jenkins = get_active_jenkins(pair)
 
     st.header(pair)
 
@@ -182,42 +236,40 @@ for pair in pairs:
     sz = result["sell_zone"]
     bz = result["buy_zone"]
 
-    st.write(f"🔴 PRIMARY SELL ZONE: {sz[0]:.5f} – {sz[1]:.5f}")
-    st.write(f"🟢 ALTERNATE BUY: {bz[0]:.5f} – {bz[1]:.5f}")
+    st.write(f"🔴 SELL: {sz[0]:.5f} – {sz[1]:.5f}")
+    st.write(f"🟢 BUY: {bz[0]:.5f} – {bz[1]:.5f}")
 
     st.write("🟡 Invalidation Up:", f"{result['invalid_up']:.5f}")
     st.write("🟡 Invalidation Down:", f"{result['invalid_down']:.5f}")
 
-    st.write("🟡 Continuation Targets (HIGH first):",
-             [f"{x:.5f}" for x in result["high_targets"]])
+    st.write("🟡 Targets HIGH:", [f"{x:.5f}" for x in result["high_targets"]])
+    st.write("🟡 Targets LOW:", [f"{x:.5f}" for x in result["low_targets"]])
 
-    st.write("🟡 Continuation Targets (LOW first):",
-             [f"{x:.5f}" for x in result["low_targets"]])
+    st.write("🟡 Score:", result["score"])
 
-    st.write("🟡 Confluence Score:", result["score"])
+    # TRSE
+    st.write("🟡 TRSE:", result["trse"])
 
-    st.write("🟡 TRSE OUTPUT:")
-    st.write("Regime:", result["trse"]["regime"])
-    st.write("Delay Day:", result["trse"]["delay"])
-    st.write("Expectation:", result["trse"]["expectation"])
-
-    # ============================================
-    # 🔥 GANN TIME DISPLAY (ADDED ONLY)
-    # ============================================
-    st.write("🟡 GANN PDF TIME WINDOWS:")
-
+    # GANN TIME
+    st.write("⏱ GANN TIME:")
     for t in time_pdf:
+        st.write(t["time"].strftime("%H:%M"))
 
-        label = ""
-        if t["angle"] == 0.25:
-            label = "45°"
-        elif t["angle"] == 0.5:
-            label = "90°"
-        elif t["angle"] == 1.0:
-            label = "180°"
-        elif t["angle"] == 2.0:
-            label = "360°"
+    # HARMONIC TIME
+    st.write("⏱ LOW WINDOWS:")
+    for t in harmonic["low_windows"]:
+        st.write(t.strftime("%H:%M"))
 
-        st.write(f"{label} → {t['time'].strftime('%H:%M')}")
+    st.write("⏱ HIGH WINDOWS:")
+    for t in harmonic["high_windows"]:
+        st.write(t.strftime("%H:%M"))
+
+    # JENKINS
+    st.write("📅 JENKINS:")
+    if jenkins:
+        for d, s in jenkins:
+            st.write(f"{d} → {s}")
+    else:
+        st.write("No active Jenkins date")
 
     st.markdown("---")
