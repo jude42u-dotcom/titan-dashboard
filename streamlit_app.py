@@ -1,188 +1,210 @@
 import streamlit as st
-from datetime import datetime
-import pytz
-import numpy as np
 import pandas as pd
+import numpy as np
+import yfinance as yf
+from datetime import datetime, timedelta
+import pytz
 
 # =========================
-# MOCK DATA (STABLE)
+# TIME (SPAIN)
 # =========================
-def get_data(pair):
-    base = 1.08 if pair == "EURUSD" else 1.26
-    prices = np.random.rand(20) * 0.01 + base
+spain = pytz.timezone("Europe/Madrid")
+now = datetime.now(spain)
 
-    df = pd.DataFrame({
-        "high": prices + 0.002,
-        "low": prices - 0.002,
-        "close": prices
-    })
-
-    return df
-
-
-# =========================
-# FOREVER (REGIME)
-# =========================
-def get_regime(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    if last["high"] > prev["high"]:
-        return "LFHL", "LOW first"
-    else:
-        return "HFL", "HIGH first"
-
-
-# =========================
-# SAM (STRUCTURE)
-# =========================
-def get_targets(low, high):
-    r = high - low
-
-    return {
-        "sell": {
-            "T1": low,
-            "T2": low - r * 0.618,
-            "T3": low - r * 1.0
-        },
-        "buy": {
-            "T1": high,
-            "T2": high + r * 0.618,
-            "T3": high + r * 1.0
-        }
-    }
-
-
-# =========================
-# TRSE
-# =========================
-def get_trse(df):
-    return "RDS Day 3", 3, "Rotation Expected"
-
-
-# =========================
-# TIME WINDOWS (SESSION BASED)
-# =========================
-def get_time_windows():
-    return {
-        "london1": "08:30–10:00",
-        "london2": "11:30–13:00",
-        "ny": "14:30–16:30"
-    }
-
-
-# =========================
-# SCORE
-# =========================
-def get_score():
-    return np.random.randint(70, 85)
-
-
-# =========================
-# TITAN ENGINE
-# =========================
-def run_titan(pair):
-    df = get_data(pair)
-
-    regime, order = get_regime(df)
-    trse, day, expectation = get_trse(df)
-
-    low = df["low"].iloc[-1]
-    high = df["high"].iloc[-1]
-
-    targets = get_targets(low, high)
-    windows = get_time_windows()
-    score = get_score()
-
-    return {
-        "pair": pair,
-        "regime": regime,
-        "order": order,
-        "targets": targets,
-        "low": low,
-        "high": high,
-        "windows": windows,
-        "score": score,
-        "trse": trse,
-        "day": day,
-        "expectation": expectation
-    }
-
-
-# =========================
-# UI
-# =========================
 st.set_page_config(layout="wide")
-
 st.title("🚀 TITAN PRO ENGINE")
-
-now = datetime.now(pytz.timezone("Europe/Madrid"))
 st.write(f"Spain Time: {now}")
 
-pairs = ["EURUSD", "GBPUSD"]
+# =========================
+# DATA
+# =========================
+def get_data(pair):
+    symbol_map = {
+        "EURUSD": "EURUSD=X",
+        "GBPUSD": "GBPUSD=X"
+    }
+    df = yf.download(symbol_map[pair], period="5d", interval="15m")
+    df.dropna(inplace=True)
+    return df
 
-for pair in pairs:
-    d = run_titan(pair)
+# =========================
+# MACRO STRUCTURE
+# =========================
+def macro_bias(df):
+    highs = df["High"].rolling(20).max()
+    lows = df["Low"].rolling(20).min()
+
+    if highs.iloc[-1] < highs.iloc[-5]:
+        return "Weekly compression → lower highs (distribution)"
+    elif lows.iloc[-1] > lows.iloc[-5]:
+        return "Weekly compression → higher lows (accumulation)"
+    else:
+        return "Expansion / neutral structure"
+
+# =========================
+# REGIME (FIRST EXTREME)
+# =========================
+def regime_expectation(df):
+    range_now = df["High"].iloc[-1] - df["Low"].iloc[-1]
+    avg_range = (df["High"] - df["Low"]).mean()
+
+    if range_now < avg_range:
+        return "HFL (HIGH first)"
+    else:
+        return "LFHL (LOW first)"
+
+# =========================
+# SESSION MODEL
+# =========================
+def session_model():
+    return "Asia drift → London expansion → NY resolution"
+
+# =========================
+# LIQUIDITY ZONES
+# =========================
+def liquidity_zones(df):
+    high_cluster = df["High"].rolling(10).max().iloc[-1]
+    low_cluster = df["Low"].rolling(10).min().iloc[-1]
+
+    return {
+        "sell_low": round(high_cluster - 0.0005, 5),
+        "sell_high": round(high_cluster, 5),
+        "buy_low": round(low_cluster, 5),
+        "buy_high": round(low_cluster + 0.0005, 5)
+    }
+
+# =========================
+# TARGET ENGINE
+# =========================
+def targets(df, direction="HIGH"):
+    last = df["Close"].iloc[-1]
+    rng = (df["High"] - df["Low"]).mean()
+
+    if direction == "HIGH":
+        return [
+            round(last + rng * 0.5, 5),
+            round(last + rng * 1.0, 5),
+            round(last + rng * 1.5, 5)
+        ]
+    else:
+        return [
+            round(last - rng * 0.5, 5),
+            round(last - rng * 1.0, 5),
+            round(last - rng * 1.5, 5)
+        ]
+
+# =========================
+# TIME WINDOWS (DYNAMIC)
+# =========================
+def time_windows():
+    base = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    return [
+        (base + timedelta(hours=8, minutes=30), base + timedelta(hours=10)),
+        (base + timedelta(hours=11, minutes=30), base + timedelta(hours=13)),
+        (base + timedelta(hours=14, minutes=30), base + timedelta(hours=16, minutes=30))
+    ]
+
+# =========================
+# TRSE ENGINE
+# =========================
+def trse():
+    day = now.day % 5 + 1
+    return {
+        "regime": f"RDS Day {day}",
+        "delay": day,
+        "next": "Rotation Expected" if day >= 3 else "Expansion"
+    }
+
+# =========================
+# CONFLUENCE SCORE
+# =========================
+def score(df):
+    vol = (df["High"] - df["Low"]).std()
+    return int(min(100, 50 + vol * 10000))
+
+# =========================
+# MAIN ENGINE
+# =========================
+def titan(pair):
+    df = get_data(pair)
+
+    macro = macro_bias(df)
+    regime = regime_expectation(df)
+    session = session_model()
+    zones = liquidity_zones(df)
+
+    if "HIGH first" in regime:
+        t_main = targets(df, "LOW")
+        t_alt = targets(df, "HIGH")
+    else:
+        t_main = targets(df, "HIGH")
+        t_alt = targets(df, "LOW")
+
+    times = time_windows()
+    tr = trse()
+    sc = score(df)
+
+    return {
+        "macro": macro,
+        "regime": regime,
+        "session": session,
+        "zones": zones,
+        "targets_main": t_main,
+        "targets_alt": t_alt,
+        "times": times,
+        "trse": tr,
+        "score": sc
+    }
+
+# =========================
+# DISPLAY
+# =========================
+def show(pair):
+    r = titan(pair)
 
     st.header(pair)
 
-    # =========================
-    # CORE TITAN OUTPUT
-    # =========================
-    st.write(f"🟡 Macro Bias: ⚪ Derived from structure")
-    st.write(f"🟡 Regime Expectation: 🔴 {d['regime']} ({d['order']})")
-    st.write(f"🟡 Session Model: ⚪ Asia → London → NY resolution")
+    st.write(f"🟡 Macro Bias: ⚪ {r['macro']}")
+    st.write(f"🟡 Regime Expectation: 🔴 {r['regime']}")
+    st.write(f"🟡 Session Model: ⚪ {r['session']}")
 
-    # =========================
-    # ZONES
-    # =========================
-    st.write(f"🔴 PRIMARY SELL ZONE: 🟣 {round(d['high'],5)}")
-    st.write(f"🟢 ALTERNATE BUY: 🟣 {round(d['low'],5)}")
+    st.write(f"🔴 PRIMARY SELL ZONE: 🟣 {r['zones']['sell_low']} – {r['zones']['sell_high']}")
+    st.write(f"🟢 ALTERNATE BUY: 🟣 {r['zones']['buy_low']} – {r['zones']['buy_high']}")
 
-    # =========================
-    # INVALIDATION
-    # =========================
-    st.write(f"🟡 Invalidation Up: 🟣 {round(d['high'] + 0.002,5)}")
-    st.write(f"🟡 Invalidation Down: 🟣 {round(d['low'] - 0.002,5)}")
+    st.write(f"🟡 Invalidation Up: 🟣 {r['zones']['sell_high'] + 0.002}")
+    st.write(f"🟡 Invalidation Down: 🟣 {r['zones']['buy_low'] - 0.002}")
 
-    # =========================
-    # TARGETS
-    # =========================
-    st.write("🟡 Continuation Targets (HIGH first):")
-    st.write(f"T1: 🟣 {round(d['targets']['sell']['T1'],5)}")
-    st.write(f"T2: 🟣 {round(d['targets']['sell']['T2'],5)}")
-    st.write(f"T3: 🟣 {round(d['targets']['sell']['T3'],5)}")
+    st.write("🟡 Continuation Targets (PRIMARY):")
+    for i, t in enumerate(r["targets_main"], 1):
+        st.write(f"T{i}: 🟣 {t}")
 
-    st.write("🟡 Continuation Targets (LOW first):")
-    st.write(f"T1: 🟣 {round(d['targets']['buy']['T1'],5)}")
-    st.write(f"T2: 🟣 {round(d['targets']['buy']['T2'],5)}")
-    st.write(f"T3: 🟣 {round(d['targets']['buy']['T3'],5)}")
+    st.write("🟡 Continuation Targets (ALTERNATE):")
+    for i, t in enumerate(r["targets_alt"], 1):
+        st.write(f"T{i}: 🟣 {t}")
 
-    # =========================
-    # TIME WINDOWS
-    # =========================
-    st.write(f"🟠 London Time Windows (Spain): 🟣 {d['windows']['london1']} 🟣 {d['windows']['london2']}")
-    st.write(f"🟠 NY Conditional Window: 🟣 {d['windows']['ny']}")
+    st.write("🟠 London Time Windows (Spain):")
+    for t in r["times"][:2]:
+        st.write(f"🟣 {t[0].strftime('%H:%M')} – {t[1].strftime('%H:%M')}")
 
-    # =========================
-    # SCORE
-    # =========================
-    st.write(f"🟡 Confluence Score: 🟣 {d['score']} / 100")
+    st.write(f"🟠 NY Conditional Window: 🟣 {r['times'][2][0].strftime('%H:%M')} – {r['times'][2][1].strftime('%H:%M')}")
 
-    # =========================
-    # TRSE
-    # =========================
+    st.write(f"🟡 Confluence Score: 🟣 {r['score']} / 100")
+
     st.write("🟡 TRSE OUTPUT:")
-    st.write(f"Regime: {d['trse']}")
-    st.write(f"Delay Day Count: {d['day']}")
-    st.write(f"Next-Day Expectation: {d['expectation']}")
+    st.write(f"Regime: {r['trse']['regime']}")
+    st.write(f"Delay Day Count: {r['trse']['delay']}")
+    st.write(f"Next-Day Expectation: {r['trse']['next']}")
 
-    # =========================
-    # RULES
-    # =========================
     st.write("🟡 Execution Rules:")
     st.write("• Trade only inside window")
     st.write("• First confirmed extreme defines direction")
     st.write("• Respect structural invalidation")
     st.write("• No confirmation → No trade")
     st.write("• NY trade only if London expansion confirmed")
+
+# =========================
+# RUN
+# =========================
+show("EURUSD")
+show("GBPUSD")
