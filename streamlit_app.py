@@ -6,9 +6,9 @@ import pytz
 import numpy as np
 
 # ==============================
-# 🔐 HARDCODED KEY (NO SECRETS)
+# 🔐 YOUR API KEY (EMBEDDED)
 # ==============================
-API_KEY = "YOUR_REAL_TWELVEDATA_KEY_HERE"
+API_KEY = "eb11f97c310f407da9961dc7c67a697e"
 
 # ==============================
 # ⏰ TIME
