@@ -67,10 +67,8 @@ def load_data(symbol):
             return pd.DataFrame()
 
         df = pd.DataFrame(r["values"])
-
         df["time"] = pd.to_datetime(df["datetime"])
         df = df.sort_values("time")
-
         df[["open","high","low","close"]] = df[["open","high","low","close"]].astype(float)
 
         return df
@@ -223,6 +221,17 @@ def get_active_jenkins(pair):
     return active
 
 # ============================================
+# 🧠 TITAN ACTION INTERPRETATION (NEW)
+# ============================================
+def titan_action_guide(score):
+    if score < 40:
+        return "🟢 Normal TITAN Trading Day → Execute zones inside time windows"
+    elif 40 <= score < 60:
+        return "🟡 Caution → Conflicting signals → Wait for London confirmation before trading"
+    else:
+        return "🔴 Do Not Trade → Market conditions invalid for TITAN execution"
+
+# ============================================
 # 🚀 UI
 # ============================================
 st.set_page_config(layout="wide")
@@ -265,6 +274,9 @@ for pair in pairs:
 
     st.write("🟡 Score:", result["score"])
 
+    # 🧠 ACTION GUIDE (NEW)
+    st.write("🧠 Action:", titan_action_guide(result["score"]))
+
     st.write("🟡 TRSE:", result["trse"])
 
     st.write("⏱ GANN TIME:")
@@ -289,10 +301,9 @@ for pair in pairs:
     st.markdown("---")
 
 # ============================================
-# 📜 EXECUTION RULES (ADDED)
+# 📜 EXECUTION RULES (UNCHANGED)
 # ============================================
 st.markdown("### 🧠 Execution Rules")
-
 st.markdown("""
 • Trade only inside window  
 • First confirmed extreme defines direction  
