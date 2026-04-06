@@ -161,7 +161,79 @@ def titan_engine(df):
     }
 
 # ============================================
-# 🔴 FAILURE FILTER (NEW)
+# 🧠 REGIME DETECTOR (ADDED ONLY)
+# ============================================
+
+def detect_regime(df):
+    recent = df.tail(20)
+
+    move = abs(recent["close"].iloc[-1] - recent["open"].iloc[0])
+    range_ = recent["high"].max() - recent["low"].min()
+    directional = sum(np.sign(recent["close"].diff().fillna(0)))
+
+    if move > range_ * 0.8 and abs(directional) > 10:
+        return "STRONG_TREND"
+
+    if range_ < 0.001:
+        return "DRIFT"
+
+    if range_ > 0.004:
+        return "EXPANSION"
+
+    return "RANGE"
+
+# ============================================
+# 🧠 NED FILTER (ADDED ONLY)
+# ============================================
+
+def ned_filter(df):
+    recent = df.tail(10)
+
+    volatility = recent["high"].max() - recent["low"].min()
+    directional = sum(np.sign(recent["close"].diff().fillna(0)))
+
+    if volatility > 0.004:
+        return True
+
+    if abs(directional) > 7:
+        return True
+
+    return False
+
+# ============================================
+# 🔴 KILL SWITCH (ADDED ONLY)
+# ============================================
+
+def kill_switch(regime):
+    if regime in ["STRONG_TREND", "DRIFT"]:
+        return True
+    return False
+
+# ============================================
+# 🧠 FINAL DECISION ENGINE (ADDED ONLY)
+# ============================================
+
+def titan_decision(regime, ned_block, kill):
+
+    if kill:
+        return "🔴 DO NOT TRADE — KILL SWITCH"
+
+    if ned_block:
+        return "🔴 DO NOT TRADE — NED BLOCK"
+
+    if regime == "EXPANSION":
+        return "🟡 CAUTION — VOLATILITY"
+
+    return "🟢 TRADE ALLOWED"
+
+# ============================================
+# ⚙️ HEDGE CONFIG (ADDED ONLY)
+# ============================================
+
+HEDGE_PIPS = 200
+
+# ============================================
+# 🔴 FAILURE FILTER (UNCHANGED)
 # ============================================
 
 def titan_failure_filter(df):
@@ -183,7 +255,7 @@ def titan_failure_filter(df):
     return score, reasons
 
 # ============================================
-# 📅 EVENT ENGINE (NEW)
+# 📅 EVENT ENGINE (UNCHANGED)
 # ============================================
 
 def titan_event_engine():
@@ -198,7 +270,7 @@ def titan_event_engine():
     return weight, reasons
 
 # ============================================
-# ⏱ EVENT TIMING ENGINE (NEW)
+# ⏱ EVENT TIMING ENGINE (UNCHANGED)
 # ============================================
 
 def titan_event_timing():
@@ -307,78 +379,6 @@ def titan_action_guide(score):
         return "🔴 Do Not Trade → Market conditions invalid for TITAN execution"
 
 # ============================================
-# 🧠 REGIME DETECTOR (ADDED ONLY)
-# ============================================
-
-def detect_regime(df):
-    recent = df.tail(20)
-
-    move = abs(recent["close"].iloc[-1] - recent["open"].iloc[0])
-    range_ = recent["high"].max() - recent["low"].min()
-    directional = sum(np.sign(recent["close"].diff().fillna(0)))
-
-    if move > range_ * 0.8 and abs(directional) > 10:
-        return "STRONG_TREND"
-
-    if range_ < 0.001:
-        return "DRIFT"
-
-    if range_ > 0.004:
-        return "EXPANSION"
-
-    return "RANGE"
-
-# ============================================
-# 🧠 NED FILTER (ADDED ONLY)
-# ============================================
-
-def ned_filter(df):
-    recent = df.tail(10)
-
-    volatility = recent["high"].max() - recent["low"].min()
-    directional = sum(np.sign(recent["close"].diff().fillna(0)))
-
-    if volatility > 0.004:
-        return True
-
-    if abs(directional) > 7:
-        return True
-
-    return False
-
-# ============================================
-# 🔴 KILL SWITCH (ADDED ONLY)
-# ============================================
-
-def kill_switch(regime):
-    if regime in ["STRONG_TREND", "DRIFT"]:
-        return True
-    return False
-
-# ============================================
-# 🧠 FINAL DECISION ENGINE (ADDED ONLY)
-# ============================================
-
-def titan_decision(regime, ned_block, kill):
-
-    if kill:
-        return "🔴 DO NOT TRADE — KILL SWITCH"
-
-    if ned_block:
-        return "🔴 DO NOT TRADE — NED BLOCK"
-
-    if regime == "EXPANSION":
-        return "🟡 CAUTION — VOLATILITY"
-
-    return "🟢 TRADE ALLOWED"
-
-# ============================================
-# ⚙️ HEDGE CONFIG (ADDED ONLY)
-# ============================================
-
-HEDGE_PIPS = 200
-
-# ============================================
 # 🚀 UI
 # ============================================
 
@@ -429,7 +429,27 @@ for pair in pairs:
     st.write("🟡 Score:", result["score"])
     st.write("🧠 Action:", titan_action_guide(result["score"]))
 
-    # 🔥 NEW ENGINE OUTPUT
+    # ============================================
+    # 🧠 NEW RISK ENGINE (ADD ONLY)
+    # ============================================
+    regime = detect_regime(df)
+    ned_block = ned_filter(df)
+    kill = kill_switch(regime)
+    decision = titan_decision(regime, ned_block, kill)
+
+    st.write("🧠 Regime:", regime)
+
+    if kill:
+        st.error("🔴 KILL SWITCH ACTIVE")
+    elif ned_block:
+        st.warning("🧠 NED BLOCK ACTIVE")
+
+    st.write("🧠 Final Decision:", decision)
+
+    # Hedge display
+    st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
+
+    # 🔥 OLD ENGINE FAILURE LOGIC (UNCHANGED)
 
     f_score, f_reasons = titan_failure_filter(df)
     e_weight, e_reasons = titan_event_engine()
@@ -437,32 +457,8 @@ for pair in pairs:
     total_score = f_score + (e_weight * 10)
 
     if total_score >= 60:
-        
-        # ============================================
-        # 🧠 NEW LAYERS (ADDED ONLY)
-        # ============================================
-
-        regime = detect_regime(df)
-        ned_block = ned_filter(df)
-        kill = kill_switch(regime)
-        decision = titan_decision(regime, ned_block, kill)
-
-        st.write("🧠 Regime:", regime)
-
-        if kill:
-            st.error("🔴 KILL SWITCH ACTIVE")
-
-        if ned_block:
-            st.warning("🧠 NED BLOCK ACTIVE")
-
-        st.write("🧠 Final Decision:", decision)
-
-        # 🔥 HEDGE DISPLAY
-        st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
-        
         st.session_state.red_streak += 1
         st.error(f"🔴 RED DAY {st.session_state.red_streak} — DO NOT TRADE")
-        
     elif total_score >= 40:
         st.session_state.red_streak = 0
         st.warning("🟡 YELLOW DAY — Caution")
