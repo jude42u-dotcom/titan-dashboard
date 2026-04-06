@@ -6,8 +6,9 @@ from datetime import datetime
 import pytz
 
 # ============================================
-# 🔒 LOCK MODE (ADDED)
+# 🔒 LOCK MODE
 # ============================================
+
 SPAIN_TZ = pytz.timezone("Europe/Madrid")
 
 def get_spain_date():
@@ -16,7 +17,6 @@ def get_spain_date():
 if "titan_locked_date" not in st.session_state:
     st.session_state.titan_locked_date = None
 
-# 🔴 RED STREAK MEMORY (NEW)
 if "red_streak" not in st.session_state:
     st.session_state.red_streak = 0
 
@@ -27,13 +27,15 @@ if st.session_state.titan_locked_date == today_spain:
     st.stop()
 
 # ============================================
-# 🔐 YOUR API KEY (UNCHANGED)
+# 🔐 API KEY
 # ============================================
+
 API_KEY = "eb11f97c310f407da9961dc7c67a697e"
 
 # ============================================
-# 📅 STATIC EVENT CALENDAR (NEW)
+# 📅 STATIC EVENT CALENDAR
 # ============================================
+
 MAJOR_EVENTS = {
     "2026-04-10": "US CPI",
     "2026-04-15": "FOMC",
@@ -42,8 +44,9 @@ MAJOR_EVENTS = {
 }
 
 # ============================================
-# 📅 JENKINS CALENDAR (UNCHANGED)
+# 📅 JENKINS CALENDAR
 # ============================================
+
 JENKINS_DATES = {
     "EUR/USD": [
         ("2026-04-20", "BUY"),
@@ -60,8 +63,9 @@ JENKINS_DATES = {
 }
 
 # ============================================
-# 📡 LOAD DATA (UNCHANGED)
+# 📡 LOAD DATA
 # ============================================
+
 @st.cache_data
 def load_data(symbol):
     try:
@@ -81,23 +85,20 @@ def load_data(symbol):
         df["time"] = pd.to_datetime(df["datetime"])
         df = df.sort_values("time")
         df[["open","high","low","close"]] = df[["open","high","low","close"]].astype(float)
-
         return df
-
     except Exception as e:
         st.error(f"{symbol} DATA ERROR: {e}")
         return pd.DataFrame()
 
 # ============================================
-# 🧠 TITAN ENGINE (UNCHANGED)
+# 🧠 TITAN ENGINE
 # ============================================
-def titan_engine(df):
 
+def titan_engine(df):
     if df is None or df.empty:
         return None
 
     df = df.copy().sort_values("time")
-
     asia = df.tail(50)
 
     asia_high = asia["high"].max()
@@ -154,12 +155,12 @@ def titan_engine(df):
     }
 
 # ============================================
-# 🔴 FAILURE FILTER (NEW)
+# 🔴 FAILURE FILTER
 # ============================================
+
 def titan_failure_filter(df):
     reasons = []
     score = 0
-
     recent = df.tail(20)
     range_val = recent["high"].max() - recent["low"].min()
 
@@ -175,8 +176,9 @@ def titan_failure_filter(df):
     return score, reasons
 
 # ============================================
-# 📅 EVENT ENGINE (NEW)
+# 📅 EVENT ENGINE
 # ============================================
+
 def titan_event_engine():
     today = str(datetime.now().date())
     weight = 0
@@ -189,11 +191,11 @@ def titan_event_engine():
     return weight, reasons
 
 # ============================================
-# ⏱ EVENT TIMING ENGINE (NEW)
+# ⏱ EVENT TIMING ENGINE
 # ============================================
+
 def titan_event_timing():
     now = datetime.now().hour
-
     if now < 8:
         return "PRE-LONDON", "Wait — no trade"
     elif 8 <= now < 14:
@@ -204,60 +206,51 @@ def titan_event_timing():
         return "POST-NY", "Avoid new trades"
 
 # ============================================
-# 🔥 GANN TIME (UNCHANGED)
+# 🔥 GANN TIME
 # ============================================
+
 def titan_time_pdf(df):
     if df is None or df.empty:
         return []
 
     last_price = float(df["close"].iloc[-1])
     root = np.sqrt(last_price)
-
     angles = [0.25, 0.5, 1.0, 2.0]
-
     base_time = df["time"].iloc[-1]
-
     windows = []
 
     for a in angles:
         minutes = root * a * 60
         future_time = base_time + pd.Timedelta(minutes=minutes)
-
-        windows.append({
-            "angle": a,
-            "time": future_time
+        windows.append({    
+            "angle": a,    
+            "time": future_time    
         })
-
     return windows
 
 # ============================================
-# 🔥 HARMONIC TIME WINDOWS (UNCHANGED)
+# 🔥 HARMONIC TIME WINDOWS
 # ============================================
+
 def calculate_time_windows(df):
-
     recent = df.tail(100)
-
     low_anchor = recent.loc[recent["low"].idxmin()]
     high_anchor = recent.loc[recent["high"].idxmax()]
-
     low_time = low_anchor["time"]
     high_time = high_anchor["time"]
-
     now = df["time"].iloc[-1]
 
     low_diff = (now - low_time).total_seconds() / 60
     high_diff = (now - high_time).total_seconds() / 60
 
     harmonics = [0.125, 0.167, 0.25, 0.333]
-
     low_windows = []
     high_windows = []
 
     for h in harmonics:
         low_proj = low_time + pd.Timedelta(minutes=low_diff * h)
         high_proj = high_time + pd.Timedelta(minutes=high_diff * h)
-
-        low_windows.append(low_proj)
+        low_windows.append(low_proj)    
         high_windows.append(high_proj)
 
     return {
@@ -266,24 +259,22 @@ def calculate_time_windows(df):
     }
 
 # ============================================
-# 🔥 JENKINS DETECTOR (UNCHANGED)
+# 🔥 JENKINS DETECTOR
 # ============================================
+
 def get_active_jenkins(pair):
     today = datetime.now().date()
-
     active = []
-
     for date_str, signal in JENKINS_DATES.get(pair, []):
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
-
-        if abs((today - d).days) <= 1:
+        if abs((today - d).days) <= 1:    
             active.append((date_str, signal))
-
     return active
 
 # ============================================
-# 🧠 TITAN ACTION INTERPRETATION (UNCHANGED)
+# 🧠 TITAN ACTION INTERPRETATION
 # ============================================
+
 def titan_action_guide(score):
     if score < 40:
         return "🟢 Normal TITAN Trading Day → Execute zones inside time windows"
@@ -291,80 +282,72 @@ def titan_action_guide(score):
         return "🟡 Caution → Conflicting signals → Wait for London confirmation before trading"
     else:
         return "🔴 Do Not Trade → Market conditions invalid for TITAN execution"
-        # ============================================
-# 🧠 REGIME DETECTOR (ADDED ONLY)
+
 # ============================================
+# 🧠 REGIME DETECTOR
+# ============================================
+
 def detect_regime(df):
     recent = df.tail(20)
-
     move = abs(recent["close"].iloc[-1] - recent["open"].iloc[0])
     range_ = recent["high"].max() - recent["low"].min()
     directional = sum(np.sign(recent["close"].diff().fillna(0)))
 
     if move > range_ * 0.8 and abs(directional) > 10:
         return "STRONG_TREND"
-
     if range_ < 0.001:
         return "DRIFT"
-
     if range_ > 0.004:
         return "EXPANSION"
-
     return "RANGE"
 
+# ============================================
+# 🧠 NED FILTER
+# ============================================
 
-# ============================================
-# 🧠 NED FILTER (ADDED ONLY)
-# ============================================
 def ned_filter(df):
     recent = df.tail(10)
-
     volatility = recent["high"].max() - recent["low"].min()
     directional = sum(np.sign(recent["close"].diff().fillna(0)))
 
     if volatility > 0.004:
         return True
-
     if abs(directional) > 7:
         return True
-
     return False
 
+# ============================================
+# 🔴 KILL SWITCH
+# ============================================
 
-# ============================================
-# 🔴 KILL SWITCH (ADDED ONLY)
-# ============================================
 def kill_switch(regime):
     if regime in ["STRONG_TREND", "DRIFT"]:
         return True
     return False
 
+# ============================================
+# 🧠 FINAL DECISION ENGINE
+# ============================================
 
-# ============================================
-# 🧠 FINAL DECISION ENGINE (ADDED ONLY)
-# ============================================
 def titan_decision(regime, ned_block, kill):
-
     if kill:
         return "🔴 DO NOT TRADE — KILL SWITCH"
-
     if ned_block:
         return "🔴 DO NOT TRADE — NED BLOCK"
-
     if regime == "EXPANSION":
         return "🟡 CAUTION — VOLATILITY"
-
     return "🟢 TRADE ALLOWED"
 
+# ============================================
+# ⚙️ HEDGE CONFIG
+# ============================================
 
-# ============================================
-# ⚙️ HEDGE CONFIG (ADDED ONLY)
-# ============================================
 HEDGE_PIPS = 200
 
 # ============================================
 # 🚀 UI
 # ============================================
+
 st.set_page_config(layout="wide")
 st.title("🚀 TITAN ENGINE V5")
 
@@ -373,20 +356,16 @@ st.write("Spain Time:", datetime.now())
 pairs = ["EUR/USD", "GBP/USD"]
 
 for pair in pairs:
-
     df = load_data(pair)
-
     if df.empty:
         continue
 
     result = titan_engine(df)
-
     time_pdf = titan_time_pdf(df)
     harmonic = calculate_time_windows(df)
     jenkins = get_active_jenkins(pair)
 
     st.header(pair)
-
     st.write("🟡 Macro Bias:", result["macro"])
     st.write("🟡 Regime Expectation:", result["probability"])
     st.write("🟡 Session Model:", result["session"])
@@ -406,34 +385,27 @@ for pair in pairs:
     st.write("🟡 Score:", result["score"])
     st.write("🧠 Action:", titan_action_guide(result["score"]))
 
-    # 🔥 NEW ENGINE OUTPUT
+    # Engine Outputs
     f_score, f_reasons = titan_failure_filter(df)
     e_weight, e_reasons = titan_event_engine()
-
     total_score = f_score + (e_weight * 10)
 
     if total_score >= 60:
-        # ============================================
-# 🧠 NEW LAYERS (ADDED ONLY)
-# ============================================
+        regime = detect_regime(df)
+        ned_block = ned_filter(df)
+        kill = kill_switch(regime)
+        decision = titan_decision(regime, ned_block, kill)
 
-regime = detect_regime(df)
-ned_block = ned_filter(df)
-kill = kill_switch(regime)
-decision = titan_decision(regime, ned_block, kill)
+        st.write("🧠 Regime:", regime)
 
-st.write("🧠 Regime:", regime)
+        if kill:
+            st.error("🔴 KILL SWITCH ACTIVE")
 
-if kill:
-    st.error("🔴 KILL SWITCH ACTIVE")
+        if ned_block:
+            st.warning("🧠 NED BLOCK ACTIVE")
 
-if ned_block:
-    st.warning("🧠 NED BLOCK ACTIVE")
-
-st.write("🧠 Final Decision:", decision)
-
-# 🔥 HEDGE DISPLAY
-st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
+        st.write("🧠 Final Decision:", decision)
+        st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
         st.session_state.red_streak += 1
         st.error(f"🔴 RED DAY {st.session_state.red_streak} — DO NOT TRADE")
     elif total_score >= 40:
@@ -444,7 +416,6 @@ st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
         st.success("🟢 GREEN DAY — Trade allowed")
 
     st.write("⏱ Event Timing:", titan_event_timing())
-
     st.write("🟡 TRSE:", result["trse"])
 
     st.write("⏱ GANN TIME:")
@@ -469,14 +440,15 @@ st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
     st.markdown("---")
 
 # ============================================
-# 📜 EXECUTION RULES (UNCHANGED)
+# 📜 EXECUTION RULES
 # ============================================
+
 st.markdown("### 🧠 Execution Rules")
 st.markdown("""
-• Trade only inside window  
-• First confirmed extreme defines direction  
-• Respect structural invalidation  
-• No confirmation → No trade  
+• Trade only inside window
+• First confirmed extreme defines direction
+• Respect structural invalidation
+• No confirmation → No trade
 • NY trade only if London expansion confirmed
 """)
 
