@@ -379,6 +379,70 @@ def titan_action_guide(score):
         return "🔴 Do Not Trade → Market conditions invalid for TITAN execution"
 
 # ============================================
+# 🧠 REGIME SHIFT DETECTOR (RSD v1.0)
+# ============================================
+def titan_rsd(df_eur, df_gbp):
+
+    score = 0
+    reasons = []
+
+    # MODULE 1 — VOLATILITY EXPANSION
+    eur_range = df_eur.tail(96)["high"].max() - df_eur.tail(96)["low"].min()
+    gbp_range = df_gbp.tail(96)["high"].max() - df_gbp.tail(96)["low"].min()
+
+    if eur_range > 0.008 or gbp_range > 0.010:
+        score += 1
+        reasons.append("Volatility Expansion")
+
+    # MODULE 2 — SESSION ALIGNMENT
+    eur_trend = df_eur["close"].iloc[-1] - df_eur["close"].iloc[-20]
+    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
+
+    if np.sign(eur_trend) == np.sign(gbp_trend):
+        score += 1
+        reasons.append("Session Alignment")
+
+    # MODULE 3 — MOMENTUM STACK
+    eur_moves = np.sign(df_eur["close"].diff().tail(20))
+    if abs(eur_moves.sum()) > 10:
+        score += 1
+        reasons.append("Momentum Stack")
+
+    # MODULE 4 — CORRELATION SPIKE
+    if abs(eur_trend) > 0.004 and abs(gbp_trend) > 0.004:
+        score += 1
+        reasons.append("Correlation Spike")
+
+    # MODULE 5 — VELOCITY
+    eur_fast = abs(df_eur["close"].iloc[-1] - df_eur["close"].iloc[-12])
+    if eur_fast > 0.003:
+        score += 1
+        reasons.append("Velocity Spike")
+
+    return score, reasons
+
+
+# ============================================
+# 🧠 RSD INTERPRETATION (ONE-LINE DECISION)
+# ============================================
+def rsd_interpretation(score):
+
+    if score <= 1:
+        return "🟢 Stable regime → Trade normally"
+
+    elif score == 2:
+        return "🟡 Early shift → Reduce exposure"
+
+    elif score == 3:
+        return "🟠 Transition → No new trades"
+
+    elif score == 4:
+        return "🔴 High risk → Block trading"
+
+    else:
+        return "🚨 Systemic event → Full shutdown"
+
+# ============================================
 # 🚀 UI
 # ============================================
 
@@ -389,12 +453,26 @@ st.write("Spain Time:", datetime.now())
 
 pairs = ["EUR/USD", "GBP/USD"]
 
+# ============================================
+# 🧠 LOAD DATA FOR RSD (ADD ONLY)
+# ============================================
+data = {}
+for p in pairs:
+    df_temp = load_data(p)
+    if not df_temp.empty:
+        data[p] = df_temp
+
+if len(data) == 2:
+    rsd_score, rsd_reasons = titan_rsd(data["EUR/USD"], data["GBP/USD"])
+else:
+    rsd_score, rsd_reasons = 0, []
+
 for pair in pairs:
 
-    df = load_data(pair)
-
-    if df.empty:
+    if pair not in data:
         continue
+    
+    df = data[pair]
 
     result = titan_engine(df)
 
@@ -427,6 +505,27 @@ for pair in pairs:
         st.write(f"  → {x:.5f}")
 
     st.write("🟡 Score:", result["score"])
+
+    # ============================================
+    # 🧠 RSD OUTPUT (ADD ONLY)
+    # ============================================
+    st.write("🧠 RSD Score:", rsd_score)
+    st.write("🧠 RSD State:", rsd_interpretation(rsd_score))
+
+    if rsd_score >= 5:
+        st.error("🚨 SYSTEMIC EVENT — STOP ALL TRADING")
+    elif rsd_score >= 4:
+        st.error("🔴 HIGH RISK REGIME")
+    elif rsd_score >= 3:
+        st.warning("🟡 TRANSITION DETECTED")
+    elif rsd_score >= 2:
+        st.info("⚠️ EARLY SHIFT")
+    else:
+        st.success("🟢 NORMAL CONDITIONS")
+
+    if rsd_reasons:
+        st.write("🧠 RSD Drivers:", rsd_reasons)
+
     st.write("🧠 Action:", titan_action_guide(result["score"]))
 
     # ============================================
