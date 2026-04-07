@@ -44,7 +44,7 @@ MAJOR_EVENTS = {
 }
 
 # ============================================
-# 📅 FULL JENKINS ENGINE (UPDATED)
+# 📅 FULL JENKINS ENGINE
 # ============================================
 
 JENKINS_ALL = {
@@ -236,7 +236,7 @@ def titan_decision(regime, ned_block, kill):
 HEDGE_PIPS = 200
 
 # ============================================
-# 🧠 JENKINS INTERPRETATION OVERLAY (NEW)
+# 🧠 JENKINS INTERPRETATION OVERLAY
 # ============================================
 
 def interpret_jenkins(signal, strength):
@@ -369,7 +369,7 @@ def calculate_time_windows(df):
     }
 
 # ============================================
-# 🔥 JENKINS DETECTOR (UPDATED)
+# 🔥 JENKINS DETECTOR
 # ============================================
 
 def get_active_jenkins(pair):
@@ -416,7 +416,7 @@ def titan_rsd(df_eur, df_gbp):
 
     # MODULE 2 — SESSION ALIGNMENT
     eur_trend = df_eur["close"].iloc[-1] - df_eur["close"].iloc[-20]
-    gbp_trend = df_gbp["close"].iloc[-1] - gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
+    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20] # FIXED SYNTAX ERROR HERE
 
     if np.sign(eur_trend) == np.sign(gbp_trend):
         score += 1
@@ -443,22 +443,18 @@ def titan_rsd(df_eur, df_gbp):
 
 
 # ============================================
-# 🧠 RSD INTERPRETATION (ONE-LINE DECISION)
+# 🧠 RSD INTERPRETATION
 # ============================================
 def rsd_interpretation(score):
 
     if score <= 1:
         return "🟢 Stable regime → Trade normally"
-
     elif score == 2:
         return "🟡 Early shift → Reduce exposure"
-
     elif score == 3:
         return "🟠 Transition → No new trades"
-
     elif score == 4:
         return "🔴 High risk → Block trading"
-
     else:
         return "🚨 Systemic event → Full shutdown"
 
@@ -601,7 +597,7 @@ for pair in pairs:
         st.write(t.strftime("%H:%M"))
 
     # ============================================
-    # 📅 JENKINS DISPLAY (UPDATED UI BLOCK)
+    # 📅 JENKINS DISPLAY
     # ============================================
     st.write("📅 JENKINS:")
 
