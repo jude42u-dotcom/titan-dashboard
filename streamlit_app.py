@@ -6,7 +6,7 @@ from datetime import datetime
 import pytz
 
 # ============================================
-# 🔒 LOCK MODE (ADDED)
+# 🔒 LOCK MODE
 # ============================================
 
 SPAIN_TZ = pytz.timezone("Europe/Madrid")
@@ -16,8 +16,6 @@ def get_spain_date():
 
 if "titan_locked_date" not in st.session_state:
     st.session_state.titan_locked_date = None
-
-# 🔴 RED STREAK MEMORY (NEW)
 
 if "red_streak" not in st.session_state:
     st.session_state.red_streak = 0
@@ -29,13 +27,13 @@ if st.session_state.titan_locked_date == today_spain:
     st.stop()
 
 # ============================================
-# 🔐 YOUR API KEY (UNCHANGED)
+# 🔐 YOUR API KEY
 # ============================================
 
 API_KEY = "eb11f97c310f407da9961dc7c67a697e"
 
 # ============================================
-# 📅 STATIC EVENT CALENDAR (NEW)
+# 📅 STATIC EVENT CALENDAR
 # ============================================
 
 MAJOR_EVENTS = {
@@ -46,12 +44,17 @@ MAJOR_EVENTS = {
 }
 
 # ============================================
-# 📅 JENKINS CALENDAR (UNCHANGED)
+# 📅 FULL JENKINS ENGINE (UPDATED)
 # ============================================
 
-JENKINS_DATES = {
+JENKINS_ALL = {
     "EUR/USD": [
+        ("2026-01-20", "SELL"),
+        ("2026-02-06", "SELL"),
+        ("2026-03-08", "BUY"),
+        ("2026-04-07", "SELL"),
         ("2026-04-20", "BUY"),
+        ("2026-05-07", "BUY"),
         ("2026-05-20", "SELL"),
         ("2026-06-04", "BUY"),
         ("2026-06-19", "SELL"),
@@ -65,7 +68,7 @@ JENKINS_DATES = {
 }
 
 # ============================================
-# 📡 LOAD DATA (UNCHANGED)
+# 📡 LOAD DATA
 # ============================================
 
 @st.cache_data
@@ -95,7 +98,7 @@ def load_data(symbol):
         return pd.DataFrame()
 
 # ============================================
-# 🧠 TITAN ENGINE (UNCHANGED)
+# 🧠 TITAN ENGINE
 # ============================================
 
 def titan_engine(df):
@@ -161,7 +164,7 @@ def titan_engine(df):
     }
 
 # ============================================
-# 🧠 REGIME DETECTOR (ADDED ONLY)
+# 🧠 REGIME DETECTOR
 # ============================================
 
 def detect_regime(df):
@@ -183,7 +186,7 @@ def detect_regime(df):
     return "RANGE"
 
 # ============================================
-# 🧠 NED FILTER (ADDED ONLY)
+# 🧠 NED FILTER
 # ============================================
 
 def ned_filter(df):
@@ -201,7 +204,7 @@ def ned_filter(df):
     return False
 
 # ============================================
-# 🔴 KILL SWITCH (ADDED ONLY)
+# 🔴 KILL SWITCH
 # ============================================
 
 def kill_switch(regime):
@@ -210,7 +213,7 @@ def kill_switch(regime):
     return False
 
 # ============================================
-# 🧠 FINAL DECISION ENGINE (ADDED ONLY)
+# 🧠 FINAL DECISION ENGINE
 # ============================================
 
 def titan_decision(regime, ned_block, kill):
@@ -227,13 +230,29 @@ def titan_decision(regime, ned_block, kill):
     return "🟢 TRADE ALLOWED"
 
 # ============================================
-# ⚙️ HEDGE CONFIG (ADDED ONLY)
+# ⚙️ HEDGE CONFIG
 # ============================================
 
 HEDGE_PIPS = 200
 
 # ============================================
-# 🔴 FAILURE FILTER (UNCHANGED)
+# 🧠 JENKINS INTERPRETATION OVERLAY (NEW)
+# ============================================
+
+def interpret_jenkins(signal, strength):
+
+    if signal == "BUY":
+        base = "LOW formation window → wait for confirmation before buying"
+    else:
+        base = "HIGH formation window → wait for confirmation before selling"
+
+    if strength == "🔥 STRONG":
+        return f"{base} (Primary timing day)"
+    else:
+        return f"{base} (Near timing window)"
+
+# ============================================
+# 🔴 FAILURE FILTER
 # ============================================
 
 def titan_failure_filter(df):
@@ -255,7 +274,7 @@ def titan_failure_filter(df):
     return score, reasons
 
 # ============================================
-# 📅 EVENT ENGINE (UNCHANGED)
+# 📅 EVENT ENGINE
 # ============================================
 
 def titan_event_engine():
@@ -270,7 +289,7 @@ def titan_event_engine():
     return weight, reasons
 
 # ============================================
-# ⏱ EVENT TIMING ENGINE (UNCHANGED)
+# ⏱ EVENT TIMING ENGINE
 # ============================================
 
 def titan_event_timing():
@@ -286,7 +305,7 @@ def titan_event_timing():
         return "POST-NY", "Avoid new trades"
 
 # ============================================
-# 🔥 GANN TIME (UNCHANGED)
+# 🔥 GANN TIME
 # ============================================
 
 def titan_time_pdf(df):
@@ -314,7 +333,7 @@ def titan_time_pdf(df):
     return windows
 
 # ============================================
-# 🔥 HARMONIC TIME WINDOWS (UNCHANGED)
+# 🔥 HARMONIC TIME WINDOWS
 # ============================================
 
 def calculate_time_windows(df):
@@ -350,24 +369,25 @@ def calculate_time_windows(df):
     }
 
 # ============================================
-# 🔥 JENKINS DETECTOR (UNCHANGED)
+# 🔥 JENKINS DETECTOR (UPDATED)
 # ============================================
 
 def get_active_jenkins(pair):
     today = datetime.now().date()
-
     active = []
 
-    for date_str, signal in JENKINS_DATES.get(pair, []):
+    for date_str, signal in JENKINS_ALL.get(pair, []):
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        diff = (today - d).days
 
-        if abs((today - d).days) <= 1:    
-            active.append((date_str, signal))
+        if abs(diff) <= 2:
+            strength = "🔥 STRONG" if diff == 0 else "⚠️ NEAR"
+            active.append((date_str, signal, strength))
 
     return active
 
 # ============================================
-# 🧠 TITAN ACTION INTERPRETATION (UNCHANGED)
+# 🧠 TITAN ACTION INTERPRETATION
 # ============================================
 
 def titan_action_guide(score):
@@ -396,7 +416,7 @@ def titan_rsd(df_eur, df_gbp):
 
     # MODULE 2 — SESSION ALIGNMENT
     eur_trend = df_eur["close"].iloc[-1] - df_eur["close"].iloc[-20]
-    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
+    gbp_trend = df_gbp["close"].iloc[-1] - gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
 
     if np.sign(eur_trend) == np.sign(gbp_trend):
         score += 1
@@ -454,7 +474,7 @@ st.write("Spain Time:", datetime.now())
 pairs = ["EUR/USD", "GBP/USD"]
 
 # ============================================
-# 🧠 LOAD DATA FOR RSD (ADD ONLY)
+# 🧠 LOAD DATA FOR RSD
 # ============================================
 data = {}
 for p in pairs:
@@ -507,7 +527,7 @@ for pair in pairs:
     st.write("🟡 Score:", result["score"])
 
     # ============================================
-    # 🧠 RSD OUTPUT (ADD ONLY)
+    # 🧠 RSD OUTPUT
     # ============================================
     st.write("🧠 RSD Score:", rsd_score)
     st.write("🧠 RSD State:", rsd_interpretation(rsd_score))
@@ -529,7 +549,7 @@ for pair in pairs:
     st.write("🧠 Action:", titan_action_guide(result["score"]))
 
     # ============================================
-    # 🧠 NEW RISK ENGINE (ADD ONLY)
+    # 🧠 NEW RISK ENGINE
     # ============================================
     regime = detect_regime(df)
     ned_block = ned_filter(df)
@@ -548,8 +568,7 @@ for pair in pairs:
     # Hedge display
     st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
 
-    # 🔥 OLD ENGINE FAILURE LOGIC (UNCHANGED)
-
+    # 🔥 FAILURE FILTER LOGIC
     f_score, f_reasons = titan_failure_filter(df)
     e_weight, e_reasons = titan_event_engine()
 
@@ -581,17 +600,22 @@ for pair in pairs:
     for t in harmonic["high_windows"]:
         st.write(t.strftime("%H:%M"))
 
+    # ============================================
+    # 📅 JENKINS DISPLAY (UPDATED UI BLOCK)
+    # ============================================
     st.write("📅 JENKINS:")
+
     if jenkins:
-        for d, s in jenkins:
-            st.write(f"{d} → {s}")
+        for d, s, strength in jenkins:
+            st.write(f"{strength} → {d} → {s}")
+            st.caption(interpret_jenkins(s, strength))
     else:
         st.write("No active Jenkins date")
 
     st.markdown("---")
 
 # ============================================
-# 📜 EXECUTION RULES (UNCHANGED)
+# 📜 EXECUTION RULES
 # ============================================
 
 st.markdown("### 🧠 Execution Rules")
