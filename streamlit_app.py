@@ -459,6 +459,99 @@ def rsd_interpretation(score):
         return "🚨 Systemic event → Full shutdown"
 
 # ============================================
+# 🧠 NEW ADDITION: MARKET CONDITION DETECTOR (MCM)
+# ============================================
+def detect_market_condition(df_eur, df_gbp):
+
+    conditions = []
+
+    eur_range = df_eur.tail(96)["high"].max() - df_eur.tail(96)["low"].min()
+    gbp_range = df_gbp.tail(96)["high"].max() - df_gbp.tail(96)["low"].min()
+
+    if eur_range < 0.004:
+        conditions.append("Low Volatility Compression")
+
+    if eur_range > 0.008:
+        conditions.append("High Volatility Expansion")
+
+    eur_trend = df_eur["close"].iloc[-1] - df_eur["close"].iloc[-20]
+
+    if abs(eur_trend) > 0.004:
+        conditions.append("Strong Trend")
+
+    if abs(eur_trend) < 0.001:
+        conditions.append("Range Market")
+
+    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
+
+    if np.sign(eur_trend) == np.sign(gbp_trend):
+        conditions.append("Correlation Spike")
+
+    eur_moves = np.sign(df_eur["close"].diff().tail(30))
+    if abs(eur_moves.sum()) > 15:
+        conditions.append("Session Alignment")
+
+    return conditions
+
+# ============================================
+# 🧠 NEW ADDITION: CONDITION SCORING + HEATMAP
+# ============================================
+def score_conditions(conditions):
+
+    score = 0
+
+    for c in conditions:
+        if c in ["Range Market"]:
+            score -= 1
+
+        if c in ["Low Volatility Compression"]:
+            score += 1
+
+        if c in ["High Volatility Expansion"]:
+            score += 2
+
+        if c in ["Strong Trend"]:
+            score += 2
+
+        if c in ["Correlation Spike"]:
+            score += 3
+
+        if c in ["Session Alignment"]:
+            score += 3
+
+    return max(score, 0)
+
+def heatmap_output(score):
+
+    if score <= 1:
+        return "🟢", "Stable market → TITAN optimal conditions"
+
+    elif score == 2:
+        return "🟡", "Early instability → monitor conditions"
+
+    elif score == 3:
+        return "🟡", "Transition phase → reduce exposure"
+
+    elif score == 4:
+        return "🔴", "High-risk regime → avoid new trades"
+
+    else:
+        return "🚨", "Systemic danger → stop trading"
+
+def interpret_condition(cond):
+
+    mapping = {
+        "Range Market": "Mean-reversion environment → best for TITAN",
+        "Low Volatility Compression": "Compression building → breakout risk coming",
+        "High Volatility Expansion": "Expansion active → continuation risk",
+        "Strong Trend": "Directional control → TITAN weak",
+        "Correlation Spike": "Pairs moving together → systemic risk",
+        "Session Alignment": "Multi-session trend → high probability continuation"
+    }
+
+    return mapping.get(cond, "")
+
+# ============================================
 # 🚀 UI
 # ============================================
 
@@ -480,8 +573,15 @@ for p in pairs:
 
 if len(data) == 2:
     rsd_score, rsd_reasons = titan_rsd(data["EUR/USD"], data["GBP/USD"])
+    # Calculate New Additions
+    market_conditions = detect_market_condition(data["EUR/USD"], data["GBP/USD"])
+    condition_score = score_conditions(market_conditions)
+    heat_color, heat_text = heatmap_output(condition_score)
 else:
     rsd_score, rsd_reasons = 0, []
+    market_conditions = []
+    condition_score = 0
+    heat_color, heat_text = "⚪", "Waiting for data..."
 
 for pair in pairs:
 
@@ -541,6 +641,25 @@ for pair in pairs:
 
     if rsd_reasons:
         st.write("🧠 RSD Drivers:", rsd_reasons)
+
+    # ============================================
+    # 🧠 NEW ADDITION: MARKET HEATMAP DISPLAY
+    # ============================================
+    st.write("🧠 Market Condition Heatmap:")
+
+    if heat_color == "🟢":
+        st.success(f"{heat_color} {heat_text}")
+    elif heat_color == "🟡":
+        st.warning(f"{heat_color} {heat_text}")
+    else:
+        st.error(f"{heat_color} {heat_text}")
+
+    if market_conditions:
+        for cond in market_conditions:
+            st.write(f"• {cond}")
+            st.caption(interpret_condition(cond))
+    else:
+        st.write("No dominant condition detected")
 
     st.write("🧠 Action:", titan_action_guide(result["score"]))
 
