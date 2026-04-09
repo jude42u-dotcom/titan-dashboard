@@ -416,7 +416,7 @@ def titan_rsd(df_eur, df_gbp):
 
     # MODULE 2 — SESSION ALIGNMENT
     eur_trend = df_eur["close"].iloc[-1] - df_eur["close"].iloc[-20]
-    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20] # FIXED SYNTAX ERROR HERE
+    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
 
     if np.sign(eur_trend) == np.sign(gbp_trend):
         score += 1
@@ -482,7 +482,7 @@ def detect_market_condition(df_eur, df_gbp):
     if abs(eur_trend) < 0.001:
         conditions.append("Range Market")
 
-    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
+    gbp_trend = df_gbp["close"].iloc[-1] - gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
 
     if np.sign(eur_trend) == np.sign(gbp_trend):
         conditions.append("Correlation Spike")
@@ -552,6 +552,83 @@ def interpret_condition(cond):
     return mapping.get(cond, "")
 
 # ============================================
+# 🧬 TITAN FIRST EXTREME PROBABILITY ENGINE v1.0
+# ============================================
+def titan_fe_probability_engine(df):
+
+    df = df.copy().sort_values("time")
+
+    now = df["time"].iloc[-1]
+    start = df["time"].iloc[0]
+
+    hour = now.hour
+    hours_since_open = (now - start).total_seconds() / 3600
+
+    # 1. HOURLY PROBABILITY (CORE)
+    hourly_prob = {
+        0: 19.4, 1: 8, 2: 6, 3: 5, 4: 4,
+        5: 6, 6: 9, 7: 10, 8: 11, 9: 9,
+        10: 7, 11: 5, 12: 6, 13: 7,
+        14: 5, 15: 3, 16: 2, 17: 2,
+        18: 1, 19: 1, 20: 1, 21: 1,
+        22: 1, 23: 1
+    }
+
+    base_prob = hourly_prob.get(hour, 5)
+
+    # 2. SESSION WEIGHTING
+    if hour < 6:
+        session = "Asia"
+        session_weight = 1.2
+    elif 6 <= hour < 12:
+        session = "London"
+        session_weight = 1.0
+    else:
+        session = "New York"
+        session_weight = 0.8
+
+    prob = base_prob * session_weight
+
+    # 3. 4H PERSISTENCE RULE
+    if hours_since_open >= 4:
+        persistence_boost = 20
+        persistence_text = "Extreme survived 4H → near guaranteed hold"
+    else:
+        persistence_boost = 0
+        persistence_text = "Not yet confirmed (below 4H)"
+
+    prob += persistence_boost
+
+    # 4. TRANSITION WINDOW (12–14)
+    if 12 <= hour <= 14:
+        prob += 10
+        transition_text = "NY transition window → trend probability elevated (~63%)"
+    else:
+        transition_text = "Normal session behavior"
+
+    # 5. FINAL NORMALIZATION
+    prob = min(prob, 95)
+
+    # 6. INTERPRETATION (ONE LINE)
+    if prob >= 80:
+        interpretation = "Very high probability extreme → strong structural day"
+    elif prob >= 60:
+        interpretation = "High probability extreme → tradable condition"
+    elif prob >= 40:
+        interpretation = "Moderate probability → wait for confirmation"
+    else:
+        interpretation = "Low probability → high risk / possible trap"
+
+    return {
+        "probability": round(prob, 1),
+        "session": session,
+        "hour": hour,
+        "interpretation": interpretation,
+        "persistence_text": persistence_text,
+        "transition_text": transition_text
+    }
+
+# ============================================
 # 🚀 UI
 # ============================================
 
@@ -573,7 +650,6 @@ for p in pairs:
 
 if len(data) == 2:
     rsd_score, rsd_reasons = titan_rsd(data["EUR/USD"], data["GBP/USD"])
-    # Calculate New Additions
     market_conditions = detect_market_condition(data["EUR/USD"], data["GBP/USD"])
     condition_score = score_conditions(market_conditions)
     heat_color, heat_text = heatmap_output(condition_score)
@@ -623,6 +699,19 @@ for pair in pairs:
     st.write("🟡 Score:", result["score"])
 
     # ============================================
+    # 🧬 FIRST EXTREME PROBABILITY ENGINE (NEW)
+    # ============================================
+    fe_prob = titan_fe_probability_engine(df)
+
+    st.write("📊 First Extreme Probability:", f"{fe_prob['probability']}%")
+    st.write("🧠 FE Interpretation:", fe_prob["interpretation"])
+
+    st.caption(
+        f"{fe_prob['session']} session | Hour {fe_prob['hour']} | "
+        f"{fe_prob['persistence_text']} | {fe_prob['transition_text']}"
+    )
+
+    # ============================================
     # 🧠 RSD OUTPUT
     # ============================================
     st.write("🧠 RSD Score:", rsd_score)
@@ -643,7 +732,7 @@ for pair in pairs:
         st.write("🧠 RSD Drivers:", rsd_reasons)
 
     # ============================================
-    # 🧠 NEW ADDITION: MARKET HEATMAP DISPLAY
+    # 🧠 MARKET HEATMAP DISPLAY
     # ============================================
     st.write("🧠 Market Condition Heatmap:")
 
@@ -664,7 +753,7 @@ for pair in pairs:
     st.write("🧠 Action:", titan_action_guide(result["score"]))
 
     # ============================================
-    # 🧠 NEW RISK ENGINE
+    # 🧠 RISK ENGINE
     # ============================================
     regime = detect_regime(df)
     ned_block = ned_filter(df)
