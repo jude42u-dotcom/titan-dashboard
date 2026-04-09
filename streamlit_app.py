@@ -416,7 +416,7 @@ def titan_rsd(df_eur, df_gbp):
 
     # MODULE 2 — SESSION ALIGNMENT
     eur_trend = df_eur["close"].iloc[-1] - df_eur["close"].iloc[-20]
-    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
+    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20] 
 
     if np.sign(eur_trend) == np.sign(gbp_trend):
         score += 1
@@ -459,7 +459,7 @@ def rsd_interpretation(score):
         return "🚨 Systemic event → Full shutdown"
 
 # ============================================
-# 🧠 NEW ADDITION: MARKET CONDITION DETECTOR (MCM)
+# 🧠 MARKET CONDITION DETECTOR (MCM)
 # ============================================
 def detect_market_condition(df_eur, df_gbp):
 
@@ -482,7 +482,7 @@ def detect_market_condition(df_eur, df_gbp):
     if abs(eur_trend) < 0.001:
         conditions.append("Range Market")
 
-    gbp_trend = df_gbp["close"].iloc[-1] - gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
+    gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
 
     if np.sign(eur_trend) == np.sign(gbp_trend):
         conditions.append("Correlation Spike")
@@ -494,7 +494,7 @@ def detect_market_condition(df_eur, df_gbp):
     return conditions
 
 # ============================================
-# 🧠 NEW ADDITION: CONDITION SCORING + HEATMAP
+# 🧠 CONDITION SCORING + HEATMAP
 # ============================================
 def score_conditions(conditions):
 
@@ -687,7 +687,6 @@ for pair in pairs:
     st.write("🟡 Invalidation Up:", f"{result['invalid_up']:.5f}")
     st.write("🟡 Invalidation Down:", f"{result['invalid_down']:.5f}")
 
-    # EXPANDED TARGET DISPLAY
     st.write("🟡 Targets HIGH:")
     for x in result["high_targets"]:
         st.write(f"  → {x:.5f}")
@@ -699,7 +698,7 @@ for pair in pairs:
     st.write("🟡 Score:", result["score"])
 
     # ============================================
-    # 🧬 FIRST EXTREME PROBABILITY ENGINE (NEW)
+    # 🧬 FIRST EXTREME PROBABILITY ENGINE
     # ============================================
     fe_prob = titan_fe_probability_engine(df)
 
@@ -753,7 +752,7 @@ for pair in pairs:
     st.write("🧠 Action:", titan_action_guide(result["score"]))
 
     # ============================================
-    # 🧠 RISK ENGINE
+    # 🧠 NEW RISK ENGINE
     # ============================================
     regime = detect_regime(df)
     ned_block = ned_filter(df)
@@ -769,10 +768,8 @@ for pair in pairs:
 
     st.write("🧠 Final Decision:", decision)
 
-    # Hedge display
     st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
 
-    # 🔥 FAILURE FILTER LOGIC
     f_score, f_reasons = titan_failure_filter(df)
     e_weight, e_reasons = titan_event_engine()
 
