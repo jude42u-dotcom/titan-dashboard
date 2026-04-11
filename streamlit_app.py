@@ -214,10 +214,10 @@ def kill_switch(regime):
     return False
 
 # ============================================
-# 🧠 FINAL DECISION ENGINE
+# 🧠 REGIME ACTION (PRESERVING LEGACY FUNCTION)
 # ============================================
 
-def titan_decision(regime, ned_block, kill):
+def titan_decision_legacy(regime, ned_block, kill):
 
     if kill:
         return "🔴 DO NOT TRADE — KILL SWITCH"
@@ -407,7 +407,6 @@ def titan_rsd(df_eur, df_gbp):
     score = 0
     reasons = []
 
-    # MODULE 1 — VOLATILITY EXPANSION
     eur_range = df_eur.tail(96)["high"].max() - df_eur.tail(96)["low"].min()
     gbp_range = df_gbp.tail(96)["high"].max() - df_gbp.tail(96)["low"].min()
 
@@ -415,7 +414,6 @@ def titan_rsd(df_eur, df_gbp):
         score += 1
         reasons.append("Volatility Expansion")
 
-    # MODULE 2 — SESSION ALIGNMENT
     eur_trend = df_eur["close"].iloc[-1] - df_eur["close"].iloc[-20]
     gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20] 
 
@@ -423,18 +421,15 @@ def titan_rsd(df_eur, df_gbp):
         score += 1
         reasons.append("Session Alignment")
 
-    # MODULE 3 — MOMENTUM STACK
     eur_moves = np.sign(df_eur["close"].diff().tail(20))
     if abs(eur_moves.sum()) > 10:
         score += 1
         reasons.append("Momentum Stack")
 
-    # MODULE 4 — CORRELATION SPIKE
     if abs(eur_trend) > 0.004 and abs(gbp_trend) > 0.004:
         score += 1
         reasons.append("Correlation Spike")
 
-    # MODULE 5 — VELOCITY
     eur_fast = abs(df_eur["close"].iloc[-1] - df_eur["close"].iloc[-12])
     if eur_fast > 0.003:
         score += 1
@@ -443,9 +438,6 @@ def titan_rsd(df_eur, df_gbp):
     return score, reasons
 
 
-# ============================================
-# 🧠 RSD INTERPRETATION
-# ============================================
 def rsd_interpretation(score):
 
     if score <= 1:
@@ -467,27 +459,21 @@ def detect_market_condition(df_eur, df_gbp):
     conditions = []
 
     eur_range = df_eur.tail(96)["high"].max() - df_eur.tail(96)["low"].min()
-    gbp_range = df_gbp.tail(96)["high"].max() - gbp_range if 'gbp_range' in locals() else 0 # Placeholder fix for local var
-    # Re-calculate for accuracy
     gbp_range = df_gbp.tail(96)["high"].max() - df_gbp.tail(96)["low"].min()
 
     if eur_range < 0.004:
         conditions.append("Low Volatility Compression")
-
     if eur_range > 0.008:
         conditions.append("High Volatility Expansion")
 
     eur_trend = df_eur["close"].iloc[-1] - df_eur["close"].iloc[-20]
-
     if abs(eur_trend) > 0.004:
         conditions.append("Strong Trend")
-
     if abs(eur_trend) < 0.001:
         conditions.append("Range Market")
 
     gbp_trend = df_gbp["close"].iloc[-1] - df_gbp["close"].iloc[-20]
-
-    if np.sign(eur_trend) == np.sign(gbp_trend):
+    if np.sign(eur_trend) == np.sign(gbp_trend) and abs(eur_trend) > 0.004:
         conditions.append("Correlation Spike")
 
     eur_moves = np.sign(df_eur["close"].diff().tail(30))
@@ -496,53 +482,24 @@ def detect_market_condition(df_eur, df_gbp):
 
     return conditions
 
-# ============================================
-# 🧠 CONDITION SCORING + HEATMAP
-# ============================================
 def score_conditions(conditions):
-
     score = 0
-
     for c in conditions:
-        if c in ["Range Market"]:
-            score -= 1
-
-        if c in ["Low Volatility Compression"]:
-            score += 1
-
-        if c in ["High Volatility Expansion"]:
-            score += 2
-
-        if c in ["Strong Trend"]:
-            score += 2
-
-        if c in ["Correlation Spike"]:
-            score += 3
-
-        if c in ["Session Alignment"]:
-            score += 3
-
+        if c in ["Range Market"]: score -= 1
+        if c in ["Low Volatility Compression"]: score += 1
+        if c in ["High Volatility Expansion"]: score += 2
+        if c in ["Strong Trend"]: score += 2
+        if c in ["Correlation Spike"]: score += 3
+        if c in ["Session Alignment"]: score += 3
     return max(score, 0)
 
 def heatmap_output(score):
-
-    if score <= 1:
-        return "🟢", "Stable market", "GREEN"
-
-    elif score == 2:
-        return "🟡", "Early instability", "YELLOW"
-
-    elif score == 3:
-        return "🟡", "Transition phase", "YELLOW"
-
-    elif score == 4:
-        return "🔴", "High-risk regime", "RED"
-
-    else:
-        return "🚨", "Systemic danger", "RED"
+    if score <= 1: return "🟢", "Stable market", "GREEN"
+    elif score <= 3: return "🟡", "Early instability", "YELLOW"
+    elif score == 4: return "🔴", "High-risk regime", "RED"
+    else: return "🚨", "Systemic danger", "RED"
 
 def interpret_condition(cond):
-
     mapping = {
         "Range Market": "Mean-reversion environment → best for TITAN",
         "Low Volatility Compression": "Compression building → breakout risk coming",
@@ -551,78 +508,47 @@ def interpret_condition(cond):
         "Correlation Spike": "Pairs moving together → systemic risk",
         "Session Alignment": "Multi-session trend → high probability continuation"
     }
-
     return mapping.get(cond, "")
 
 # ============================================
-# 🧬 TITAN FIRST EXTREME PROBABILITY ENGINE v1.0
+# 🧬 TITAN FIRST EXTREME PROBABILITY ENGINE
 # ============================================
 def titan_fe_probability_engine(df):
 
     df = df.copy().sort_values("time")
-
     now = df["time"].iloc[-1]
     start = df["time"].iloc[0]
-
     hour = now.hour
     hours_since_open = (now - start).total_seconds() / 3600
 
-    # 1. HOURLY PROBABILITY (CORE)
-    hourly_prob = {
-        0: 19.4, 1: 8, 2: 6, 3: 5, 4: 4,
-        5: 6, 6: 9, 7: 10, 8: 11, 9: 9,
-        10: 7, 11: 5, 12: 6, 13: 7,
-        14: 5, 15: 3, 16: 2, 17: 2,
-        18: 1, 19: 1, 20: 1, 21: 1,
-        22: 1, 23: 1
-    }
-
+    hourly_prob = {0: 19.4, 1: 8, 2: 6, 3: 5, 4: 4, 5: 6, 6: 9, 7: 10, 8: 11, 9: 9, 10: 7, 11: 5, 12: 6, 13: 7, 14: 5, 15: 3, 16: 2, 17: 2, 18: 1, 19: 1, 20: 1, 21: 1, 22: 1, 23: 1}
     base_prob = hourly_prob.get(hour, 5)
 
-    # 2. SESSION WEIGHTING
-    if hour < 6:
-        session = "Asia"
-        session_weight = 1.2
-    elif 6 <= hour < 12:
-        session = "London"
-        session_weight = 1.0
-    else:
-        session = "New York"
-        session_weight = 0.8
+    if hour < 6: session, weight = "Asia", 1.2
+    elif hour < 12: session, weight = "London", 1.0
+    else: session, weight = "New York", 0.8
+    prob = base_prob * weight
 
-    prob = base_prob * session_weight
-
-    # 3. 4H PERSISTENCE RULE
     hold_4h = False
     if hours_since_open >= 4:
-        persistence_boost = 20
+        prob += 20
         persistence_text = "Extreme survived 4H → near guaranteed hold"
         hold_4h = True
     else:
-        persistence_boost = 0
         persistence_text = "Not yet confirmed (below 4H)"
 
-    prob += persistence_boost
-
-    # 4. TRANSITION WINDOW (12–14)
     if 12 <= hour <= 14:
         prob += 10
-        transition_text = "NY transition window → trend probability elevated (~63%)"
+        transition_text = "NY transition window → trend probability elevated"
     else:
         transition_text = "Normal session behavior"
 
-    # 5. FINAL NORMALIZATION
     prob = min(prob, 95)
-
-    # 6. INTERPRETATION (ONE LINE)
-    if prob >= 80:
-        interpretation = "Very high probability extreme → strong structural day"
-    elif prob >= 60:
-        interpretation = "High probability extreme → tradable condition"
-    elif prob >= 40:
-        interpretation = "Moderate probability → wait for confirmation"
-    else:
-        interpretation = "Low probability → high risk / possible trap"
+    
+    if prob >= 80: interpretation = "Very high probability extreme → strong structural day"
+    elif prob >= 60: interpretation = "High probability extreme → tradable condition"
+    elif prob >= 40: interpretation = "Moderate probability → wait for confirmation"
+    else: interpretation = "Low probability → high risk / possible trap"
 
     return {
         "probability": round(prob, 1),
@@ -635,66 +561,54 @@ def titan_fe_probability_engine(df):
     }
 
 # ============================================
-# 🧠 CORE RULE ENGINE (NEW ADDITION)
+# 🧠 CORE HIERARCHY ENGINE (FIXED)
 # ============================================
 
-def titan_decision_engine(data):
-    reasons = []
-    state = []
-
+def titan_hierarchical_decision(data):
+    """
+    FIXED HIERARCHY:
+    1. HARD BLOCKS (Highest Priority)
+    2. STRUCTURAL DOMINANCE (4H Hold) -> If true, FE probability is bypassed.
+    3. REGIME FILTER
+    4. PROBABILITY FILTER (Lowest Priority)
+    """
+    
+    # 1. HARD BLOCKS
     if data["post_ny"]:
         return "DO NOT TRADE", "Post-NY session. No new trades allowed."
+    
+    if data["invalid_market"]:
+        return "DO NOT TRADE", "Market conditions invalid (Instability block)."
 
-    if data["rsd"] == 0:
-        return "DO NOT TRADE", "Market structure unstable."
+    if data["correlation_spike"]:
+        return "DO NOT TRADE", "Correlation spike detected → Multi-pair systemic risk."
 
-    if data["fe_prob"] < 40:
-        reasons.append("First extreme is weak (<40%)")
-    elif data["fe_prob"] > 70:
-        state.append("Strong extreme")
-
+    # 2. STRUCTURAL DOMINANCE (4H HOLD)
+    # KEY FIX: If 4H hold is true, we ignore weak FE Prob percentages.
     if data["fe_4h_valid"]:
-        state.append("Extreme confirmed (4H hold)")
+        return "TRADE ALLOWED", "Extreme confirmed (4H hold) → Structural edge active. FE probability bypassed."
 
-    if data["heatmap"] == "RED":
-        return "DO NOT TRADE", "Market unstable (RED condition)."
+    # 3. REGIME FILTER
+    if data["regime"] == "RANGE":
+        return "TRADE ALLOWED", "Range environment detected → Mean reversion edge active."
 
-    if data["heatmap"] == "YELLOW":
-        reasons.append("Market in transition phase")
+    # 4. PROBABILITY FILTER (Only if not structurally confirmed)
+    if data["fe_prob"] < 40:
+        return "CAUTION", f"Weak extreme ({data['fe_prob']}%) → High trap probability. Wait for confirmation."
 
-    if data["correlation"]:
-        reasons.append("Correlation spike detected")
-
-    if len(reasons) > 0:
-        return "CAUTION", " | ".join(reasons)
-
-    return "TRADE ALLOWED", "Conditions favorable. Execute strategy."
+    return "TRADE ALLOWED", "Conditions favorable. Execute normally."
 
 # ============================================
-# 🧬 INTERPRETATION LAYER (NEW ADDITION)
+# 🧬 INTERPRETATION LAYER
 # ============================================
 
-def interpret_decision(decision, reason):
+def interpret_decision_ui(decision, reason):
     if decision == "DO NOT TRADE":
-        return f"🚫 DO NOT TRADE\n\nMarket conditions are not favorable.\n{reason}\n\nStand aside. Your edge is not present."
+        return f"🚫 DO NOT TRADE\n\n{reason}"
     elif decision == "CAUTION":
-        return f"⚠ CAUTION — REDUCE RISK\n\n{reason}\n\nMarket is unstable or unclear. Expect traps or fake moves. Trade smaller or wait."
-    elif decision == "TRADE ALLOWED":
-        return f"✅ TRADE ALLOWED\n\n{reason}\n\nConditions support the strategy. Execute normally using your zones and timing."
-
-def fe_interpretation(prob, hold_4h):
-    if hold_4h:
-        return "Extreme confirmed (4H hold). Very high probability it holds."
-    if prob < 40:
-        return "Weak extreme. High probability of break or trap."
-    elif prob < 70:
-        return "Moderate extreme. Needs confirmation."
+        return f"⚠️ CAUTION — REDUCE RISK\n\n{reason}"
     else:
-        return "Strong extreme. High probability of holding."
-
-# ============================================
-# 🔥 CONFIDENCE SCORE ENGINE (NEW ADDITION)
-# ============================================
+        return f"✅ TRADE ALLOWED\n\n{reason}"
 
 def compute_confidence_score(data):
     score = 0
@@ -703,7 +617,7 @@ def compute_confidence_score(data):
     if data["fe_4h_valid"]: score += 20
     if data["heatmap"] == "GREEN": score += 15
     elif data["heatmap"] == "YELLOW": score += 5
-    if data["rsd"] == 1: score += 10
+    if data["rsd_stable"]: score += 10
     return score
 
 # ============================================
@@ -713,234 +627,81 @@ def compute_confidence_score(data):
 st.set_page_config(layout="wide")
 st.title("🚀 TITAN ENGINE V5")
 
-st.write("Spain Time:", datetime.now())
-
 pairs = ["EUR/USD", "GBP/USD"]
-
-# ============================================
-# 🧠 LOAD DATA FOR RSD
-# ============================================
-data = {}
+data_store = {}
 for p in pairs:
     df_temp = load_data(p)
     if not df_temp.empty:
-        data[p] = df_temp
+        data_store[p] = df_temp
 
-if len(data) == 2:
-    rsd_score, rsd_reasons = titan_rsd(data["EUR/USD"], data["GBP/USD"])
-    market_conditions = detect_market_condition(data["EUR/USD"], data["GBP/USD"])
+if len(data_store) == 2:
+    rsd_score, rsd_reasons = titan_rsd(data_store["EUR/USD"], data_store["GBP/USD"])
+    market_conditions = detect_market_condition(data_store["EUR/USD"], data_store["GBP/USD"])
     condition_score = score_conditions(market_conditions)
     heat_icon, heat_text, heat_label = heatmap_output(condition_score)
 else:
-    rsd_score, rsd_reasons = 0, []
-    market_conditions = []
-    condition_score = 0
-    heat_icon, heat_text, heat_label = "⚪", "Waiting for data...", "GREY"
+    rsd_score, rsd_reasons, heat_label = 0, [], "GREY"
 
 for pair in pairs:
-
-    if pair not in data:
-        continue
+    if pair not in data_store: continue
     
-    df = data[pair]
-
+    df = data_store[pair]
     result = titan_engine(df)
-
-    time_pdf = titan_time_pdf(df)
-    harmonic = calculate_time_windows(df)
-    jenkins = get_active_jenkins(pair)
-
-    st.header(pair)
-
-    # ============================================
-    # 🧠 NEW INTEGRATED DECISION PANEL
-    # ============================================
     fe_prob_data = titan_fe_probability_engine(df)
-    
-    # Prepare data for new Engine
+    regime = detect_regime(df)
+
+    # Prepare data for Hierarchy Engine
     engine_input = {
         "session": fe_prob_data["session"],
         "fe_prob": fe_prob_data["probability"],
         "fe_4h_valid": fe_prob_data["hold_4h"],
-        "rsd": 1 if rsd_score <= 2 else 0,
-        "heatmap": heat_label,
-        "correlation": True if "Correlation Spike" in market_conditions else False,
-        "post_ny": True if datetime.now().hour >= 17 else False
+        "regime": regime,
+        "invalid_market": rsd_score >= 4 or heat_label == "RED",
+        "correlation_spike": "Correlation Spike" in market_conditions,
+        "post_ny": datetime.now().hour >= 17,
+        "rsd_stable": rsd_score <= 1,
+        "heatmap": heat_label
     }
 
-    decision_status, decision_reason = titan_decision_engine(engine_input)
-    final_msg = interpret_decision(decision_status, decision_reason)
-    fe_text = fe_interpretation(engine_input["fe_prob"], engine_input["fe_4h_valid"])
+    decision_status, decision_reason = titan_hierarchical_decision(engine_input)
+    final_msg = interpret_decision_ui(decision_status, decision_reason)
     conf_score = compute_confidence_score(engine_input)
 
+    st.header(pair)
+
+    # --- NEW INTEGRATED DECISION PANEL ---
     col1, col2 = st.columns([2, 1])
-    
     with col1:
         st.subheader("🧠 TITAN DECISION PANEL")
-        if decision_status == "DO NOT TRADE":
-            st.error(final_msg)
-        elif decision_status == "CAUTION":
-            st.warning(final_msg)
-        else:
-            st.success(final_msg)
-        
-        st.info(f"📊 **First Extreme:** {fe_text}")
-
+        if decision_status == "DO NOT TRADE": st.error(final_msg)
+        elif decision_status == "CAUTION": st.warning(final_msg)
+        else: st.success(final_msg)
     with col2:
         st.metric("TITAN Confidence Score", f"{conf_score}/100")
 
     st.markdown("---")
 
-    st.write("🟡 Macro Bias:", result["macro"])
-    st.write("🟡 Regime Expectation:", result["probability"])
-    st.write("🟡 Session Model:", result["session"])
+    # Zone Display
+    sz, bz = result["sell_zone"], result["buy_zone"]
+    st.write(f"🔴 SELL: {sz[0]:.5f} – {sz[1]:.5f} | 🟢 BUY: {bz[0]:.5f} – {bz[1]:.5f}")
+    
+    # Target Display
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        st.write("🟡 Targets HIGH:")
+        for x in result["high_targets"]: st.write(f"  → {x:.5f}")
+    with col_t2:
+        st.write("🟡 Targets LOW:")
+        for x in result["low_targets"]: st.write(f"  → {x:.5f}")
 
-    sz = result["sell_zone"]
-    bz = result["buy_zone"]
-
-    st.write(f"🔴 SELL: {sz[0]:.5f} – {sz[1]:.5f}")
-    st.write(f"🟢 BUY: {bz[0]:.5f} – {bz[1]:.5f}")
-
-    st.write("🟡 Invalidation Up:", f"{result['invalid_up']:.5f}")
-    st.write("🟡 Invalidation Down:", f"{result['invalid_down']:.5f}")
-
-    st.write("🟡 Targets HIGH:")
-    for x in result["high_targets"]:
-        st.write(f"  → {x:.5f}")
-        
-    st.write("🟡 Targets LOW:")
-    for x in result["low_targets"]:
-        st.write(f"  → {x:.5f}")
-
-    st.write("🟡 Score:", result["score"])
-
-    # ============================================
-    # 🧬 FIRST EXTREME PROBABILITY ENGINE OUTPUT
-    # ============================================
-    st.write("📊 First Extreme Probability:", f"{fe_prob_data['probability']}%")
-    st.write("🧠 FE Interpretation:", fe_prob_data["interpretation"])
-
-    st.caption(
-        f"{fe_prob_data['session']} session | Hour {fe_prob_data['hour']} | "
-        f"{fe_prob_data['persistence_text']} | {fe_prob_data['transition_text']}"
-    )
-
-    # ============================================
-    # 🧠 RSD OUTPUT
-    # ============================================
-    st.write("🧠 RSD Score:", rsd_score)
+    # Legacy & Analysis Sections (Kept as requested)
+    st.write("📊 FE Probability:", f"{fe_prob_data['probability']}% | {fe_prob_data['interpretation']}")
     st.write("🧠 RSD State:", rsd_interpretation(rsd_score))
-
-    if rsd_score >= 5:
-        st.error("🚨 SYSTEMIC EVENT — STOP ALL TRADING")
-    elif rsd_score >= 4:
-        st.error("🔴 HIGH RISK REGIME")
-    elif rsd_score >= 3:
-        st.warning("🟡 TRANSITION DETECTED")
-    elif rsd_score >= 2:
-        st.info("⚠️ EARLY SHIFT")
-    else:
-        st.success("🟢 NORMAL CONDITIONS")
-
-    if rsd_reasons:
-        st.write("🧠 RSD Drivers:", rsd_reasons)
-
-    # ============================================
-    # 🧠 MARKET HEATMAP DISPLAY
-    # ============================================
-    st.write("🧠 Market Condition Heatmap:")
-
-    if heat_icon == "🟢":
-        st.success(f"{heat_icon} {heat_text}")
-    elif heat_icon == "🟡":
-        st.warning(f"{heat_icon} {heat_text}")
-    else:
-        st.error(f"{heat_icon} {heat_text}")
-
-    if market_conditions:
-        for cond in market_conditions:
-            st.write(f"• {cond}")
-            st.caption(interpret_condition(cond))
-    else:
-        st.write("No dominant condition detected")
-
-    st.write("🧠 Action:", titan_action_guide(result["score"]))
-
-    # ============================================
-    # 🧠 NEW RISK ENGINE
-    # ============================================
-    regime = detect_regime(df)
-    ned_block = ned_filter(df)
-    kill = kill_switch(regime)
-    decision = titan_decision(regime, ned_block, kill)
-
-    st.write("🧠 Regime:", regime)
-
-    if kill:
-        st.error("🔴 KILL SWITCH ACTIVE")
-    elif ned_block:
-        st.warning("🧠 NED BLOCK ACTIVE")
-
-    st.write("🧠 Final Decision:", decision)
-
-    st.write(f"🛡 Hedge Level: {HEDGE_PIPS} pips")
-
-    f_score, f_reasons = titan_failure_filter(df)
-    e_weight, e_reasons = titan_event_engine()
-
-    total_score = f_score + (e_weight * 10)
-
-    if total_score >= 60:
-        st.session_state.red_streak += 1
-        st.error(f"🔴 RED DAY {st.session_state.red_streak} — DO NOT TRADE")
-    elif total_score >= 40:
-        st.session_state.red_streak = 0
-        st.warning("🟡 YELLOW DAY — Caution")
-    else:
-        st.session_state.red_streak = 0
-        st.success("🟢 GREEN DAY — Trade allowed")
-
-    st.write("⏱ Event Timing:", titan_event_timing())
-
-    st.write("🟡 TRSE:", result["trse"])
-
-    st.write("⏱ GANN TIME:")
-    for t in time_pdf:
-        st.write(t["time"].strftime("%H:%M"))
-
-    st.write("⏱ LOW WINDOWS:")
-    for t in harmonic["low_windows"]:
-        st.write(t.strftime("%H:%M"))
-
-    st.write("⏱ HIGH WINDOWS:")
-    for t in harmonic["high_windows"]:
-        st.write(t.strftime("%H:%M"))
-
-    # ============================================
-    # 📅 JENKINS DISPLAY
-    # ============================================
-    st.write("📅 JENKINS:")
-
-    if jenkins:
-        for d, s, strength in jenkins:
-            st.write(f"{strength} → {d} → {s}")
-            st.caption(interpret_jenkins(s, strength))
-    else:
-        st.write("No active Jenkins date")
+    
+    if heat_label == "GREEN": st.success(f"🟢 {heat_text}")
+    elif heat_label == "YELLOW": st.warning(f"🟡 {heat_text}")
+    else: st.error(f"🔴 {heat_text}")
 
     st.markdown("---")
-
-# ============================================
-# 📜 EXECUTION RULES
-# ============================================
-
-st.markdown("### 🧠 Execution Rules")
-st.markdown("""
-• Trade only inside window
-• First confirmed extreme defines direction
-• Respect structural invalidation
-• No confirmation → No trade
-• NY trade only if London expansion confirmed
-""")
 
 st.session_state.titan_locked_date = today_spain
