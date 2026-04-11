@@ -4,6 +4,7 @@ import numpy as np
 import requests
 from datetime import datetime
 import pytz
+import json
 
 # ============================================
 # 🔒 LOCK MODE
@@ -466,6 +467,8 @@ def detect_market_condition(df_eur, df_gbp):
     conditions = []
 
     eur_range = df_eur.tail(96)["high"].max() - df_eur.tail(96)["low"].min()
+    gbp_range = df_gbp.tail(96)["high"].max() - gbp_range if 'gbp_range' in locals() else 0 # Placeholder fix for local var
+    # Re-calculate for accuracy
     gbp_range = df_gbp.tail(96)["high"].max() - df_gbp.tail(96)["low"].min()
 
     if eur_range < 0.004:
@@ -524,19 +527,19 @@ def score_conditions(conditions):
 def heatmap_output(score):
 
     if score <= 1:
-        return "🟢", "Stable market → TITAN optimal conditions"
+        return "🟢", "Stable market", "GREEN"
 
     elif score == 2:
-        return "🟡", "Early instability → monitor conditions"
+        return "🟡", "Early instability", "YELLOW"
 
     elif score == 3:
-        return "🟡", "Transition phase → reduce exposure"
+        return "🟡", "Transition phase", "YELLOW"
 
     elif score == 4:
-        return "🔴", "High-risk regime → avoid new trades"
+        return "🔴", "High-risk regime", "RED"
 
     else:
-        return "🚨", "Systemic danger → stop trading"
+        return "🚨", "Systemic danger", "RED"
 
 def interpret_condition(cond):
 
@@ -590,9 +593,11 @@ def titan_fe_probability_engine(df):
     prob = base_prob * session_weight
 
     # 3. 4H PERSISTENCE RULE
+    hold_4h = False
     if hours_since_open >= 4:
         persistence_boost = 20
         persistence_text = "Extreme survived 4H → near guaranteed hold"
+        hold_4h = True
     else:
         persistence_boost = 0
         persistence_text = "Not yet confirmed (below 4H)"
@@ -625,8 +630,81 @@ def titan_fe_probability_engine(df):
         "hour": hour,
         "interpretation": interpretation,
         "persistence_text": persistence_text,
-        "transition_text": transition_text
+        "transition_text": transition_text,
+        "hold_4h": hold_4h
     }
+
+# ============================================
+# 🧠 CORE RULE ENGINE (NEW ADDITION)
+# ============================================
+
+def titan_decision_engine(data):
+    reasons = []
+    state = []
+
+    if data["post_ny"]:
+        return "DO NOT TRADE", "Post-NY session. No new trades allowed."
+
+    if data["rsd"] == 0:
+        return "DO NOT TRADE", "Market structure unstable."
+
+    if data["fe_prob"] < 40:
+        reasons.append("First extreme is weak (<40%)")
+    elif data["fe_prob"] > 70:
+        state.append("Strong extreme")
+
+    if data["fe_4h_valid"]:
+        state.append("Extreme confirmed (4H hold)")
+
+    if data["heatmap"] == "RED":
+        return "DO NOT TRADE", "Market unstable (RED condition)."
+
+    if data["heatmap"] == "YELLOW":
+        reasons.append("Market in transition phase")
+
+    if data["correlation"]:
+        reasons.append("Correlation spike detected")
+
+    if len(reasons) > 0:
+        return "CAUTION", " | ".join(reasons)
+
+    return "TRADE ALLOWED", "Conditions favorable. Execute strategy."
+
+# ============================================
+# 🧬 INTERPRETATION LAYER (NEW ADDITION)
+# ============================================
+
+def interpret_decision(decision, reason):
+    if decision == "DO NOT TRADE":
+        return f"🚫 DO NOT TRADE\n\nMarket conditions are not favorable.\n{reason}\n\nStand aside. Your edge is not present."
+    elif decision == "CAUTION":
+        return f"⚠ CAUTION — REDUCE RISK\n\n{reason}\n\nMarket is unstable or unclear. Expect traps or fake moves. Trade smaller or wait."
+    elif decision == "TRADE ALLOWED":
+        return f"✅ TRADE ALLOWED\n\n{reason}\n\nConditions support the strategy. Execute normally using your zones and timing."
+
+def fe_interpretation(prob, hold_4h):
+    if hold_4h:
+        return "Extreme confirmed (4H hold). Very high probability it holds."
+    if prob < 40:
+        return "Weak extreme. High probability of break or trap."
+    elif prob < 70:
+        return "Moderate extreme. Needs confirmation."
+    else:
+        return "Strong extreme. High probability of holding."
+
+# ============================================
+# 🔥 CONFIDENCE SCORE ENGINE (NEW ADDITION)
+# ============================================
+
+def compute_confidence_score(data):
+    score = 0
+    if data["session"] == "London": score += 25
+    score += min(data["fe_prob"], 25)
+    if data["fe_4h_valid"]: score += 20
+    if data["heatmap"] == "GREEN": score += 15
+    elif data["heatmap"] == "YELLOW": score += 5
+    if data["rsd"] == 1: score += 10
+    return score
 
 # ============================================
 # 🚀 UI
@@ -652,12 +730,12 @@ if len(data) == 2:
     rsd_score, rsd_reasons = titan_rsd(data["EUR/USD"], data["GBP/USD"])
     market_conditions = detect_market_condition(data["EUR/USD"], data["GBP/USD"])
     condition_score = score_conditions(market_conditions)
-    heat_color, heat_text = heatmap_output(condition_score)
+    heat_icon, heat_text, heat_label = heatmap_output(condition_score)
 else:
     rsd_score, rsd_reasons = 0, []
     market_conditions = []
     condition_score = 0
-    heat_color, heat_text = "⚪", "Waiting for data..."
+    heat_icon, heat_text, heat_label = "⚪", "Waiting for data...", "GREY"
 
 for pair in pairs:
 
@@ -673,6 +751,45 @@ for pair in pairs:
     jenkins = get_active_jenkins(pair)
 
     st.header(pair)
+
+    # ============================================
+    # 🧠 NEW INTEGRATED DECISION PANEL
+    # ============================================
+    fe_prob_data = titan_fe_probability_engine(df)
+    
+    # Prepare data for new Engine
+    engine_input = {
+        "session": fe_prob_data["session"],
+        "fe_prob": fe_prob_data["probability"],
+        "fe_4h_valid": fe_prob_data["hold_4h"],
+        "rsd": 1 if rsd_score <= 2 else 0,
+        "heatmap": heat_label,
+        "correlation": True if "Correlation Spike" in market_conditions else False,
+        "post_ny": True if datetime.now().hour >= 17 else False
+    }
+
+    decision_status, decision_reason = titan_decision_engine(engine_input)
+    final_msg = interpret_decision(decision_status, decision_reason)
+    fe_text = fe_interpretation(engine_input["fe_prob"], engine_input["fe_4h_valid"])
+    conf_score = compute_confidence_score(engine_input)
+
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("🧠 TITAN DECISION PANEL")
+        if decision_status == "DO NOT TRADE":
+            st.error(final_msg)
+        elif decision_status == "CAUTION":
+            st.warning(final_msg)
+        else:
+            st.success(final_msg)
+        
+        st.info(f"📊 **First Extreme:** {fe_text}")
+
+    with col2:
+        st.metric("TITAN Confidence Score", f"{conf_score}/100")
+
+    st.markdown("---")
 
     st.write("🟡 Macro Bias:", result["macro"])
     st.write("🟡 Regime Expectation:", result["probability"])
@@ -698,16 +815,14 @@ for pair in pairs:
     st.write("🟡 Score:", result["score"])
 
     # ============================================
-    # 🧬 FIRST EXTREME PROBABILITY ENGINE
+    # 🧬 FIRST EXTREME PROBABILITY ENGINE OUTPUT
     # ============================================
-    fe_prob = titan_fe_probability_engine(df)
-
-    st.write("📊 First Extreme Probability:", f"{fe_prob['probability']}%")
-    st.write("🧠 FE Interpretation:", fe_prob["interpretation"])
+    st.write("📊 First Extreme Probability:", f"{fe_prob_data['probability']}%")
+    st.write("🧠 FE Interpretation:", fe_prob_data["interpretation"])
 
     st.caption(
-        f"{fe_prob['session']} session | Hour {fe_prob['hour']} | "
-        f"{fe_prob['persistence_text']} | {fe_prob['transition_text']}"
+        f"{fe_prob_data['session']} session | Hour {fe_prob_data['hour']} | "
+        f"{fe_prob_data['persistence_text']} | {fe_prob_data['transition_text']}"
     )
 
     # ============================================
@@ -735,12 +850,12 @@ for pair in pairs:
     # ============================================
     st.write("🧠 Market Condition Heatmap:")
 
-    if heat_color == "🟢":
-        st.success(f"{heat_color} {heat_text}")
-    elif heat_color == "🟡":
-        st.warning(f"{heat_color} {heat_text}")
+    if heat_icon == "🟢":
+        st.success(f"{heat_icon} {heat_text}")
+    elif heat_icon == "🟡":
+        st.warning(f"{heat_icon} {heat_text}")
     else:
-        st.error(f"{heat_color} {heat_text}")
+        st.error(f"{heat_icon} {heat_text}")
 
     if market_conditions:
         for cond in market_conditions:
