@@ -945,3 +945,146 @@ st.markdown("""
 """)
 
 st.session_state.titan_locked_date = today_spain
+# ============================================
+# 🧠 SECONDARY RULE ENGINE + SCHEDULER (ADDED ONLY)
+# ============================================
+
+def check_secondary_rules(df):
+    results = []
+
+    now = datetime.now(SPAIN_TZ)
+    hour = now.hour
+
+    # Rule 1 — London timing
+    rule_london = 7 <= hour <= 12
+    results.append(("London Window", rule_london, "Best execution window"))
+
+    # Rule 2 — 4H persistence (REMINDER ONLY)
+    rule_4h = hour >= 10
+    results.append(("4H Rule Awareness", rule_4h, "Check if extreme held 4H"))
+
+    # Rule 3 — Volatility
+    recent = df.tail(20)
+    range_val = recent["high"].max() - recent["low"].min()
+    rule_vol = range_val > 0.001
+    results.append(("Volatility OK", rule_vol, "Sufficient movement"))
+
+    # Rule 4 — Regime stability
+    regime = detect_regime(df)
+    rule_regime = regime in ["RANGE"]
+    results.append(("Stable Regime", rule_regime, f"Current regime: {regime}"))
+
+    return results
+
+
+# ============================================
+# 🧠 SCORING ENGINE (ADDED ONLY)
+# ============================================
+
+def score_secondary_rules(results):
+    score = 0
+
+    for name, passed, _ in results:
+        if name == "4H Rule Awareness" and passed:
+            score += 30
+        elif name == "London Window" and passed:
+            score += 20
+        elif name == "Volatility OK" and passed:
+            score += 15
+        elif name == "Stable Regime" and passed:
+            score += 25
+
+    # session bonus
+    now = datetime.now(SPAIN_TZ)
+    if 8 <= now.hour <= 10:
+        score += 10
+
+    return score
+
+
+# ============================================
+# 🧠 INTERPRETATION (ADDED ONLY)
+# ============================================
+
+def interpret_secondary(results, score):
+    passed = [r for r in results if r[1]]
+    failed = [r for r in results if not r[1]]
+
+    # HARD BLOCK
+    for r in results:
+        if r[0] == "Stable Regime" and not r[1]:
+            return "NO TRADE", score, passed, failed, "Market not stable"
+
+    if score >= 80:
+        return "GO TRADE", score, passed, failed, "Strong confluence"
+    elif score >= 60:
+        return "GO TRADE (Reduced)", score, passed, failed, "Moderate confluence"
+    elif score >= 40:
+        return "CAUTION", score, passed, failed, "Weak structure"
+    else:
+        return "NO TRADE", score, passed, failed, "Conditions unfavorable"
+
+
+# ============================================
+# ⏰ SCHEDULER (ADDED ONLY)
+# ============================================
+
+def run_secondary_update(df):
+    results = check_secondary_rules(df)
+    score = score_secondary_rules(results)
+    decision = interpret_secondary(results, score)
+
+    st.session_state["secondary_results"] = results
+    st.session_state["secondary_score"] = score
+    st.session_state["secondary_decision"] = decision
+    st.session_state["last_secondary_run"] = datetime.now(SPAIN_TZ)
+
+
+# ============================================
+# 🧠 TRIGGER TIMES (ADDED ONLY)
+# ============================================
+
+now = datetime.now(SPAIN_TZ)
+
+if "last_secondary_run" not in st.session_state:
+    st.session_state["last_secondary_run"] = None
+
+run_time = st.session_state["last_secondary_run"]
+
+# RUN AT 08:30
+if now.hour == 8 and now.minute >= 30:
+    if run_time is None or run_time.date() != now.date():
+        if len(data) > 0:
+            any_pair = list(data.keys())[0]
+            run_secondary_update(data[any_pair])
+
+
+# ============================================
+# 🖥️ DISPLAY PANEL (ADDED ONLY)
+# ============================================
+
+st.markdown("## 🧠 SECONDARY RULE PANEL (08:30 CHECK)")
+
+if "secondary_decision" in st.session_state:
+
+    decision, score, passed, failed, reason = st.session_state["secondary_decision"]
+
+    if decision.startswith("GO"):
+        st.success(f"{decision} ({score}/100)")
+    elif decision == "CAUTION":
+        st.warning(f"{decision} ({score}/100)")
+    else:
+        st.error(f"{decision} ({score}/100)")
+
+    st.write(reason)
+
+    st.markdown("### ✅ Rules Met")
+    for r in passed:
+        st.write(f"- {r[0]}")
+
+    st.markdown("### ❌ Rules Not Met")
+    for r in failed:
+        st.write(f"- {r[0]}")
+
+else:
+    st.info("Waiting for 08:30 rule validation...")
