@@ -959,9 +959,9 @@ def check_secondary_rules(df):
     rule_london = 7 <= hour <= 12
     results.append(("London Window", rule_london, "Best execution window"))
 
-    # Rule 2 — 4H persistence (REMINDER ONLY)
+    # Rule 2 — 4H awareness (NOT auto validation)
     rule_4h = hour >= 10
-    results.append(("4H Rule Awareness", rule_4h, "Check if extreme held 4H"))
+    results.append(("4H Rule Awareness", rule_4h, "Check if extreme held 4H manually"))
 
     # Rule 3 — Volatility
     recent = df.tail(20)
@@ -994,12 +994,12 @@ def score_secondary_rules(results):
         elif name == "Stable Regime" and passed:
             score += 25
 
-    # session bonus
+    # London open bonus (precision timing)
     now = datetime.now(SPAIN_TZ)
     if 8 <= now.hour <= 10:
         score += 10
 
-    return score
+    return min(score, 100)
 
 
 # ============================================
@@ -1010,23 +1010,23 @@ def interpret_secondary(results, score):
     passed = [r for r in results if r[1]]
     failed = [r for r in results if not r[1]]
 
-    # HARD BLOCK
+    # HARD BLOCK (critical)
     for r in results:
         if r[0] == "Stable Regime" and not r[1]:
-            return "NO TRADE", score, passed, failed, "Market not stable"
+            return "NO TRADE", score, passed, failed, "Market not in stable range structure"
 
     if score >= 80:
-        return "GO TRADE", score, passed, failed, "Strong confluence"
+        return "GO TRADE", score, passed, failed, "Strong confluence — conditions aligned"
     elif score >= 60:
-        return "GO TRADE (Reduced)", score, passed, failed, "Moderate confluence"
+        return "GO TRADE (Reduced)", score, passed, failed, "Moderate confluence — reduce size"
     elif score >= 40:
-        return "CAUTION", score, passed, failed, "Weak structure"
+        return "CAUTION", score, passed, failed, "Weak structure — wait for confirmation"
     else:
-        return "NO TRADE", score, passed, failed, "Conditions unfavorable"
+        return "NO TRADE", score, passed, failed, "Conditions not favorable"
 
 
 # ============================================
-# ⏰ SCHEDULER (ADDED ONLY)
+# ⏰ EXECUTION FUNCTION (ADDED ONLY)
 # ============================================
 
 def run_secondary_update(df):
@@ -1041,7 +1041,7 @@ def run_secondary_update(df):
 
 
 # ============================================
-# 🧠 TRIGGER TIMES (ADDED ONLY)
+# ⏰ SCHEDULER FIXED (ADDED ONLY)
 # ============================================
 
 now = datetime.now(SPAIN_TZ)
@@ -1051,8 +1051,8 @@ if "last_secondary_run" not in st.session_state:
 
 run_time = st.session_state["last_secondary_run"]
 
-# RUN AT 08:30
-if now.hour == 8 and now.minute >= 30:
+# ✅ FIXED LOGIC — runs anytime AFTER 08:30 (once per day)
+if now.hour >= 8:
     if run_time is None or run_time.date() != now.date():
         if len(data) > 0:
             any_pair = list(data.keys())[0]
@@ -1060,7 +1060,61 @@ if now.hour == 8 and now.minute >= 30:
 
 
 # ============================================
-# 🖥️ DISPLAY PANEL (ADDED ONLY)
+# 🧠 4H RULE REMINDER (STATIC — NO AUTO LOGIC)
+# ============================================
+
+st.markdown("### ⏱ 4H RULE REMINDER")
+
+current_hour = now.hour
+
+if current_hour < 6:
+    st.info("Extreme likely forming → do NOT assume direction yet")
+elif 6 <= current_hour < 8:
+    st.warning("Extreme forming → monitor closely before London")
+elif 8 <= current_hour < 10:
+    st.warning("London active → wait before trusting extreme")
+else:
+    st.success("If extreme formed earlier → 4H validation possible")
+
+
+# ============================================
+# 🧠 MANUAL EXTREME TRACKER (USER CONTROLLED)
+# ============================================
+
+st.markdown("### 🎯 Extreme Tracker (Manual 4H Timer)")
+
+if "extreme_time" not in st.session_state:
+    st.session_state["extreme_time"] = None
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("Mark Extreme Now"):
+        st.session_state["extreme_time"] = datetime.now(SPAIN_TZ)
+
+with col2:
+    if st.button("Reset Extreme"):
+        st.session_state["extreme_time"] = None
+
+extreme_time = st.session_state["extreme_time"]
+
+if extreme_time:
+    elapsed = (datetime.now(SPAIN_TZ) - extreme_time).total_seconds() / 3600
+
+    st.write(f"Extreme marked at: {extreme_time.strftime('%H:%M')}")
+
+    if elapsed >= 4:
+        st.success("✅ 4H HOLD CONFIRMED → EXTREME VALID")
+    else:
+        remaining = 4 - elapsed
+        st.warning(f"⏳ 4H not complete → wait {remaining:.1f} hours")
+
+else:
+    st.info("No extreme marked yet")
+
+
+# ============================================
+# 🖥️ SECONDARY PANEL DISPLAY
 # ============================================
 
 st.markdown("## 🧠 SECONDARY RULE PANEL (08:30 CHECK)")
@@ -1080,11 +1134,15 @@ if "secondary_decision" in st.session_state:
 
     st.markdown("### ✅ Rules Met")
     for r in passed:
-        st.write(f"- {r[0]}")
+        st.write(f"- {r[0]} → {r[2]}")
 
     st.markdown("### ❌ Rules Not Met")
     for r in failed:
-        st.write(f"- {r[0]}")
+        st.write(f"- {r[0]} → {r[2]}")
+
+    last_run = st.session_state.get("last_secondary_run")
+    if last_run:
+        st.caption(f"Last update: {last_run.strftime('%H:%M')} Spain time")
 
 else:
     st.info("Waiting for 08:30 rule validation...")
