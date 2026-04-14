@@ -6,6 +6,70 @@ import requests
 from datetime import datetime
 import pytz
 import json
+# ============================================
+# 🧠 MICRO ENGINE (1M FOREVER LAYER)
+# ============================================
+
+class MicroEngine:
+    def __init__(self, df):
+        self.df = df.copy().sort_values("time")
+
+    def detect_regime(self):
+        session = self.df.tail(240)  # ~4 hours of 1m data
+        high_idx = session["high"].idxmax()
+        low_idx = session["low"].idxmin()
+
+        if low_idx < high_idx:
+            return "LFHL"
+        elif high_idx < low_idx:
+            return "HFL"
+        else:
+            return "UNCLEAR"
+
+    def calculate_levels(self):
+        recent = self.df.tail(120)
+        buy = recent["low"].min()
+        sell = recent["high"].max()
+        return buy, sell
+
+    def calculate_targets(self, buy, sell):
+        r = abs(sell - buy)
+
+        buy_t = [buy + r*0.5, buy + r*1.0, buy + r*1.5]
+        sell_t = [sell - r*0.5, sell - r*1.0, sell - r*1.5]
+
+        return buy_t, sell_t
+
+    def calculate_invalidation(self, buy, sell):
+        buffer = abs(sell - buy) * 0.3
+        return buy - buffer, sell + buffer
+
+    def calculate_windows(self):
+        now = self.df["time"].iloc[-1]
+
+        low_w = (now - pd.Timedelta(minutes=30), now + pd.Timedelta(minutes=30))
+        high_w = (now + pd.Timedelta(minutes=60), now + pd.Timedelta(minutes=120))
+
+        return low_w, high_w
+
+    def run(self):
+        regime = self.detect_regime()
+        buy, sell = self.calculate_levels()
+        buy_t, sell_t = self.calculate_targets(buy, sell)
+        buy_inv, sell_inv = self.calculate_invalidation(buy, sell)
+        low_w, high_w = self.calculate_windows()
+
+        return {
+            "regime": regime,
+            "buy": buy,
+            "sell": sell,
+            "buy_t": buy_t,
+            "sell_t": sell_t,
+            "buy_inv": buy_inv,
+            "sell_inv": sell_inv,
+            "low_w": low_w,
+            "high_w": high_w
+        }
 
 # ============================================
 # 🔒 LOCK MODE
@@ -706,6 +770,102 @@ def compute_confidence_score(data):
     elif data["heatmap"] == "YELLOW": score += 5
     if data["rsd"] == 1: score += 10
     return score
+    # ============================================
+# ⚡ MICRO STRUCTURE ENGINE (FOREVER PROTOCOL)
+# ============================================
+
+def titan_micro_engine(df):
+
+    df = df.copy().sort_values("time")
+
+    recent = df.tail(120)
+
+    high = recent["high"].max()
+    low = recent["low"].min()
+    mid = (high + low) / 2
+
+    range_ = high - low
+    step = range_ / 4
+
+    # REGIME DETECTION
+    last = recent.iloc[-1]["close"]
+    prev = recent.iloc[-20]["close"]
+
+    if last > prev:
+        regime = "LFHL (Low → High → Higher Low)"
+    else:
+        regime = "HFL (High → Low → Lower High)"
+
+    # LEVELS
+    buy_levels = (low, low + step)
+    sell_levels = (high - step, high)
+
+    # TARGETS
+    buy_targets = [mid, high - step, high]
+    sell_targets = [mid, low + step, low]
+
+    # INVALIDATION
+    invalid_buy = low - step
+    invalid_sell = high + step
+
+    # TIME WINDOWS (simple harmonic proxy)
+    base_time = df["time"].iloc[-1]
+    windows = [
+        base_time + pd.Timedelta(minutes=15),
+        base_time + pd.Timedelta(minutes=30),
+        base_time + pd.Timedelta(minutes=60),
+    ]
+
+    return {
+        "regime": regime,
+        "buy_levels": buy_levels,
+        "sell_levels": sell_levels,
+        "buy_targets": buy_targets,
+        "sell_targets": sell_targets,
+        "invalid_buy": invalid_buy,
+        "invalid_sell": invalid_sell,
+        "windows": windows
+    }
+
+
+# ============================================
+# 🖥️ MICRO PANEL UI
+# ============================================
+
+def render_micro_panel(df):
+
+    micro = titan_micro_engine(df)
+
+    st.markdown("### ⚡ MICRO STRUCTURE (FOREVER 1M)")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.write("🧠 Regime:", micro["regime"])
+        st.write(f"🟢 Buy Zone: {micro['buy_levels'][0]:.5f} – {micro['buy_levels'][1]:.5f}")
+        st.write(f"🔴 Sell Zone: {micro['sell_levels'][0]:.5f} – {micro['sell_levels'][1]:.5f}")
+
+    with col2:
+        st.write(f"❌ Buy Invalidation: {micro['invalid_buy']:.5f}")
+        st.write(f"❌ Sell Invalidation: {micro['invalid_sell']:.5f}")
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        st.write("🎯 Buy Targets:")
+        for t in micro["buy_targets"]:
+            st.write(f"→ {t:.5f}")
+
+    with col4:
+        st.write("🎯 Sell Targets:")
+        for t in micro["sell_targets"]:
+            st.write(f"→ {t:.5f}")
+
+    st.write("⏱ Micro Time Windows:")
+    for t in micro["windows"]:
+        st.write(t.strftime("%H:%M"))
+
+    st.markdown("---")
 
 # ============================================
 # 🚀 UI
@@ -744,6 +904,8 @@ for pair in pairs:
         continue
     
     df = data[pair]
+    
+render_micro_panel(df)
 
     result = titan_engine(df)
 
