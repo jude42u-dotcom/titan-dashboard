@@ -905,19 +905,20 @@ for pair in pairs:
 
     df = data[pair]
 
-# ✅ MICRO PANEL (NEW LAYER)
-render_micro_panel(df)
+    # ✅ MICRO PANEL (NEW LAYER)
+    render_micro_panel(df)
 
-# ✅ MACRO ENGINE (EXISTING)
-result = titan_engine(df)
+    # ✅ MACRO ENGINE (EXISTING)
+    result = titan_engine(df)
 
-# ✅ TIME + SUPPORT DATA (FIXED)
-time_pdf = titan_time_pdf(df)
-harmonic = calculate_time_windows(df)
-jenkins = get_active_jenkins(pair)
+    # ✅ TIME + SUPPORT DATA (FIXED)
+    time_pdf = titan_time_pdf(df)
+    harmonic = calculate_time_windows(df)
+    jenkins = get_active_jenkins(pair)
 
-# ✅ UI START
-st.header(pair)
+    # ✅ UI START
+    st.header(pair)
+
 
     # ============================================
     # 🧠 NEW INTEGRATED DECISION PANEL
