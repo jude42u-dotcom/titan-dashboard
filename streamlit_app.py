@@ -902,17 +902,22 @@ for pair in pairs:
 
     if pair not in data:
         continue
-    
+
     df = data[pair]
-    
+
+# ✅ MICRO PANEL (NEW LAYER)
 render_micro_panel(df)
- result = titan_engine(df)
 
-    time_pdf = titan_time_pdf(df)
-    harmonic = calculate_time_windows(df)
-    jenkins = get_active_jenkins(pair)
+# ✅ MACRO ENGINE (EXISTING)
+result = titan_engine(df)
 
-    st.header(pair)
+# ✅ TIME + SUPPORT DATA (FIXED)
+time_pdf = titan_time_pdf(df)
+harmonic = calculate_time_windows(df)
+jenkins = get_active_jenkins(pair)
+
+# ✅ UI START
+st.header(pair)
 
     # ============================================
     # 🧠 NEW INTEGRATED DECISION PANEL
