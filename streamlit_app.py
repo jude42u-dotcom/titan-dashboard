@@ -72,25 +72,67 @@ class MicroEngine:
         }
 
 # ============================================
-# 🔒 LOCK MODE
+# 🔒 TITAN SMART LOCK MODE (22:50 SPAIN)
 # ============================================
 
 SPAIN_TZ = pytz.timezone("Europe/Madrid")
 
-def get_spain_date():
-    return datetime.now(SPAIN_TZ).date()
+def get_spain_now():
+    return datetime.now(SPAIN_TZ)
 
+def get_spain_date():
+    return get_spain_now().date()
+
+# ================================
+# SESSION STATE INIT
+# ================================
 if "titan_locked_date" not in st.session_state:
     st.session_state.titan_locked_date = None
+
+if "titan_data_store" not in st.session_state:
+    st.session_state.titan_data_store = {}
 
 if "red_streak" not in st.session_state:
     st.session_state.red_streak = 0
 
-today_spain = get_spain_date()
+# ================================
+# TIME CHECK
+# ================================
+now = get_spain_now()
+today_spain = now.date()
 
-if st.session_state.titan_locked_date == today_spain:
-    st.warning("🔒 TITAN LOCKED FOR TODAY — Refresh disabled")
-    st.stop()
+LOCK_HOUR = 22
+LOCK_MINUTE = 50
+
+is_lock_time = (now.hour > LOCK_HOUR) or (
+    now.hour == LOCK_HOUR and now.minute >= LOCK_MINUTE
+)
+
+is_locked_today = st.session_state.titan_locked_date == today_spain
+
+# ================================
+# LOCK EXECUTION
+# ================================
+def titan_store_result(pair, data):
+    st.session_state.titan_data_store[pair] = data
+
+def titan_get_result(pair):
+    return st.session_state.titan_data_store.get(pair, None)
+
+# ================================
+# LOCK TRIGGER
+# ================================
+if is_lock_time and not is_locked_today:
+    st.session_state.titan_locked_date = today_spain
+    st.success("🔒 TITAN LOCK ACTIVATED (22:50 SPAIN)")
+
+# ================================
+# LOCK STATUS DISPLAY
+# ================================
+if is_locked_today:
+    st.warning("🔒 TITAN LOCKED — Using stored levels (stable mode)")
+else:
+    st.info("🟢 LIVE MODE — Calculations updating until 22:50")
 
 # ============================================
 # 🔐 YOUR API KEY
@@ -905,18 +947,38 @@ for pair in pairs:
 
     df = data[pair]
 
-    # ✅ MICRO PANEL (NEW LAYER)
-    render_micro_panel(df)
+    # ============================================
+    # 🔒 MICRO PANEL (LOCKED)
+    # ============================================
+    if is_locked_today:
+        micro_data = titan_get_result(f"{pair}_micro")
+    else:
+        micro_data = df  # we pass df normally
+        if is_lock_time:
+            titan_store_result(f"{pair}_micro", df)
 
-    # ✅ MACRO ENGINE (EXISTING)
-    result = titan_engine(df)
+    render_micro_panel(micro_data)
 
-    # ✅ TIME + SUPPORT DATA (FIXED)
+    # ============================================
+    # 🔒 MACRO ENGINE (LOCKED)
+    # ============================================
+    if is_locked_today:
+        result = titan_get_result(pair)
+    else:
+        result = titan_engine(df)
+        if is_lock_time:
+            titan_store_result(pair, result)
+
+    # ============================================
+    # ⏱ TIME + SUPPORT DATA (LIVE OK)
+    # ============================================
     time_pdf = titan_time_pdf(df)
     harmonic = calculate_time_windows(df)
     jenkins = get_active_jenkins(pair)
 
-    # ✅ UI START
+    # ============================================
+    # 🖥 UI START
+    # ============================================
     st.header(pair)
 
 
