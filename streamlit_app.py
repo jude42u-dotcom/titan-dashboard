@@ -906,8 +906,7 @@ for pair in pairs:
     df = data[pair]
     
 render_micro_panel(df)
-
-    result = titan_engine(df)
+ result = titan_engine(df)
 
     time_pdf = titan_time_pdf(df)
     harmonic = calculate_time_windows(df)
