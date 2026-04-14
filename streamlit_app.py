@@ -908,7 +908,80 @@ def render_micro_panel(df):
         st.write(t.strftime("%H:%M"))
 
     st.markdown("---")
+# ============================================
+# 🧠 MICRO STRUCTURE ENGINE (LOCKABLE)
+# ============================================
 
+def build_micro_structure(df):
+
+    recent = df.tail(120)
+
+    high = recent["high"].max()
+    low = recent["low"].min()
+    mid = (high + low) / 2
+
+    # REGIME
+    if recent["close"].iloc[-1] > mid:
+        regime = "HFL"
+    else:
+        regime = "LFHL"
+
+    rng = max(high - low, 0.0001)
+    step = rng / 3
+
+    buy_zone = (low, low + step)
+    sell_zone = (high - step, high)
+
+    buy_targets = [low + step, mid, high]
+    sell_targets = [high - step, mid, low]
+
+    invalid_buy = low - step
+    invalid_sell = high + step
+
+    now = df["time"].iloc[-1]
+    windows = [
+        now + pd.Timedelta(minutes=15),
+        now + pd.Timedelta(minutes=30),
+        now + pd.Timedelta(minutes=60)
+    ]
+
+    return {
+        "regime": regime,
+        "buy_zone": buy_zone,
+        "sell_zone": sell_zone,
+        "buy_targets": buy_targets,
+        "sell_targets": sell_targets,
+        "invalid_buy": invalid_buy,
+        "invalid_sell": invalid_sell,
+        "time_windows": windows
+    }
+
+
+# ============================================
+# 🖥 MICRO PANEL (LOCKED DISPLAY)
+# ============================================
+
+def render_micro_panel(micro):
+
+    st.subheader("⚡ MICRO STRUCTURE (1M FOREVER)")
+
+    st.write("Regime:", micro["regime"])
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.write("🟢 BUY:", f"{micro['buy_zone'][0]:.5f} – {micro['buy_zone'][1]:.5f}")
+        st.write("Targets:", [round(x,5) for x in micro["buy_targets"]])
+        st.write("Invalidation:", round(micro["invalid_buy"],5))
+
+    with col2:
+        st.write("🔴 SELL:", f"{micro['sell_zone'][0]:.5f} – {micro['sell_zone'][1]:.5f}")
+        st.write("Targets:", [round(x,5) for x in micro["sell_targets"]])
+        st.write("Invalidation:", round(micro["invalid_sell"],5))
+
+    st.write("⏱ Time Windows:")
+    for t in micro["time_windows"]:
+        st.write(t.strftime("%H:%M"))
 # ============================================
 # 🚀 UI
 # ============================================
@@ -947,17 +1020,18 @@ for pair in pairs:
 
     df = data[pair]
 
-    # ============================================
-    # 🔒 MICRO PANEL (LOCKED)
-    # ============================================
-    if is_locked_today:
-        micro_data = titan_get_result(f"{pair}_micro")
-    else:
-        micro_data = df  # we pass df normally
-        if is_lock_time:
-            titan_store_result(f"{pair}_micro", df)
 
-    render_micro_panel(micro_data)
+# ============================================
+# 🔒 MICRO STRUCTURE (FULL LOCK)
+# ============================================
+if is_locked_today:
+    micro = titan_get_result(f"{pair}_micro")
+else:
+    micro = build_micro_structure(df)
+    if is_lock_time:
+        titan_store_result(f"{pair}_micro", micro)
+
+render_micro_panel(micro)
 
     # ============================================
     # 🔒 MACRO ENGINE (LOCKED)
