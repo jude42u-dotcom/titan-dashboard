@@ -1013,6 +1013,9 @@ else:
     condition_score = 0
     heat_icon, heat_text, heat_label = "⚪", "Waiting for data...", "GREY"
 
+# ============================================
+# 🔁 MAIN LOOP
+# ============================================
 for pair in pairs:
 
     if pair not in data:
@@ -1020,18 +1023,17 @@ for pair in pairs:
 
     df = data[pair]
 
+    # ============================================
+    # 🔒 MICRO STRUCTURE (FULL LOCK)
+    # ============================================
+    if is_locked_today:
+        micro = titan_get_result(f"{pair}_micro")
+    else:
+        micro = build_micro_structure(df)
+        if is_lock_time:
+            titan_store_result(f"{pair}_micro", micro)
 
-# ============================================
-# 🔒 MICRO STRUCTURE (FULL LOCK)
-# ============================================
-if is_locked_today:
-    micro = titan_get_result(f"{pair}_micro")
-else:
-    micro = build_micro_structure(df)
-    if is_lock_time:
-        titan_store_result(f"{pair}_micro", micro)
-
-render_micro_panel(micro)
+    render_micro_panel(micro)
 
     # ============================================
     # 🔒 MACRO ENGINE (LOCKED)
@@ -1044,16 +1046,17 @@ render_micro_panel(micro)
             titan_store_result(pair, result)
 
     # ============================================
-    # ⏱ TIME + SUPPORT DATA (LIVE OK)
+    # ⏱ TIME + SUPPORT DATA
     # ============================================
     time_pdf = titan_time_pdf(df)
     harmonic = calculate_time_windows(df)
     jenkins = get_active_jenkins(pair)
 
     # ============================================
-    # 🖥 UI START
+    # 🖥️ UI START
     # ============================================
     st.header(pair)
+
 
 
     # ============================================
