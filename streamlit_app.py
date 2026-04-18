@@ -1058,84 +1058,52 @@ for pair in pairs:
     # 🖥️ UI START
     # ============================================
     st.header(pair)
-    # ============================================
+# ============================================
 # 🔥 TIME GEOMETRY ENGINE (TTGE)
 # ============================================
 
 st.subheader("⏱️ TIME GEOMETRY ENGINE")
 
-t1 = micro.get("t1_time") if "t1_time" in micro else None
-t2 = micro.get("t2_time") if "t2_time" in micro else None
+# Use existing harmonic windows (already computed)
+low_windows = harmonic.get("low_windows", [])
+high_windows = harmonic.get("high_windows", [])
 
-if t1 and t2:
+if low_windows or high_windows:
 
-    def get_cluster(t):
+    st.write("📍 WHERE (Cluster Probability)")
+    st.success("Cluster → 85–90%")
+
+    st.write("⏱️ WHEN (Execution Windows)")
+
+    # Combine and sort times
+    all_windows = sorted(low_windows + high_windows)
+
+    for t in all_windows:
         hour = t.hour
-        if 0 <= hour < 3:
-            return "C1 (00:00–03:00)"
-        elif 3 <= hour < 5:
-            return "C2 (03:00–05:00)"
-        elif 5 <= hour < 7:
-            return "C3 (05:00–07:00)"
-        elif 7 <= hour < 9:
-            return "C4 (07:00–09:00)"
+
+        # Assign probability (your PDF logic)
+        if 5 <= hour <= 7:
+            prob = 0.70
+        elif 7 < hour <= 10:
+            prob = 0.65
+        elif 0 <= hour < 5:
+            prob = 0.55
         else:
-            return "Outside"
+            prob = 0.50
 
-    c1 = get_cluster(t1)
-    c2 = get_cluster(t2)
+        st.write(f"{t.strftime('%H:%M')} → {int(prob*100)}%")
 
-    # ============================================
-    # 🎯 CLUSTER PROBABILITY (WHERE)
-    # ============================================
+    # Best window
+    best = max(all_windows, key=lambda t: (
+        0.70 if 5 <= t.hour <= 7 else
+        0.65 if 7 < t.hour <= 10 else
+        0.55
+    ))
 
-    primary_cluster = c2
-    secondary_cluster = c1
-
-    cluster_prob_primary = 0.88   # 85–90%
-    cluster_prob_secondary = 0.82
-
-    st.success(f"WHERE → {primary_cluster} ({int(cluster_prob_primary*100)}%)")
-    st.info(f"Secondary Cluster → {secondary_cluster} ({int(cluster_prob_secondary*100)}%)")
-
-    # ============================================
-    # ⏱ WINDOW PROBABILITY (WHEN)
-    # ============================================
-
-    windows = [
-        {
-            "time": "05:00 – 05:30",
-            "harmonic": "0.250",
-            "prob": 0.58   # within 55–70%
-        },
-        {
-            "time": "06:00 – 06:30",
-            "harmonic": "0.333",
-            "prob": 0.67
-        }
-    ]
-
-    st.write("WHEN → Execution Windows:")
-
-    for w in windows:
-        st.write(
-            f"{w['time']} → {int(w['prob']*100)}% "
-            f"(Harmonic {w['harmonic']})"
-        )
-
-    # ============================================
-    # ⭐ BEST WINDOW
-    # ============================================
-
-    best = max(windows, key=lambda x: x["prob"])
-
-    st.success(
-        f"⭐ Best Execution Window: {best['time']} "
-        f"({int(best['prob']*100)}%)"
-    )
+    st.success(f"⭐ Best Window → {best.strftime('%H:%M')} (~70%)")
 
 else:
-    st.warning("No time data available")
+    st.warning("No time windows available")
 
 
     # ============================================
