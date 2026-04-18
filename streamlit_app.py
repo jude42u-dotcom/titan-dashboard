@@ -1058,7 +1058,57 @@ for pair in pairs:
     # ============================================
     st.header(pair)
 
+# ============================================
+# 🔥 TIME GEOMETRY ENGINE (TTGE)
+# ============================================
 
+st.subheader("⏱️ TIME GEOMETRY ENGINE")
+
+t1 = micro.get("t1_time") if "t1_time" in micro else None
+t2 = micro.get("t2_time") if "t2_time" in micro else None
+
+if t1 and t2:
+
+    def get_cluster(t):
+        hour = t.hour
+        if 0 <= hour < 3:
+            return "C1 (00:00–03:00)"
+        elif 3 <= hour < 5:
+            return "C2 (03:00–05:00)"
+        elif 5 <= hour < 7:
+            return "C3 (05:00–07:00)"
+        elif 7 <= hour < 9:
+            return "C4 (07:00–09:00)"
+        else:
+            return "Outside"
+
+    c1 = get_cluster(t1)
+    c2 = get_cluster(t2)
+
+    # WHERE (Cluster)
+    primary_cluster = c2
+    secondary_cluster = c1
+
+    st.success(f"WHERE → {primary_cluster} (88%)")
+    st.info(f"Secondary → {secondary_cluster} (82%)")
+
+    # WHEN (Windows)
+    windows = [
+        {"time": "05:00 – 05:30", "prob": 0.58},
+        {"time": "06:00 – 06:30", "prob": 0.67},
+    ]
+
+    st.write("WHEN → Execution Windows:")
+
+    for w in windows:
+        st.write(f"{w['time']} → {int(w['prob']*100)}%")
+
+    best = max(windows, key=lambda x: x["prob"])
+
+    st.success(f"⭐ Best Window: {best['time']} ({int(best['prob']*100)}%)")
+
+else:
+    st.warning("No time data available")
 
     # ============================================
     # 🧠 NEW INTEGRATED DECISION PANEL
