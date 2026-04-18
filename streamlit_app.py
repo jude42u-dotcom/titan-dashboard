@@ -1058,52 +1058,7 @@ for pair in pairs:
     # 🖥️ UI START
     # ============================================
     st.header(pair)
-# ============================================
-# 🔥 TIME GEOMETRY ENGINE (TTGE)
-# ============================================
 
-st.subheader("⏱️ TIME GEOMETRY ENGINE")
-
-# Use existing harmonic windows (already computed)
-low_windows = harmonic.get("low_windows", [])
-high_windows = harmonic.get("high_windows", [])
-
-if low_windows or high_windows:
-
-    st.write("📍 WHERE (Cluster Probability)")
-    st.success("Cluster → 85–90%")
-
-    st.write("⏱️ WHEN (Execution Windows)")
-
-    # Combine and sort times
-    all_windows = sorted(low_windows + high_windows)
-
-    for t in all_windows:
-        hour = t.hour
-
-        # Assign probability (your PDF logic)
-        if 5 <= hour <= 7:
-            prob = 0.70
-        elif 7 < hour <= 10:
-            prob = 0.65
-        elif 0 <= hour < 5:
-            prob = 0.55
-        else:
-            prob = 0.50
-
-        st.write(f"{t.strftime('%H:%M')} → {int(prob*100)}%")
-
-    # Best window
-    best = max(all_windows, key=lambda t: (
-        0.70 if 5 <= t.hour <= 7 else
-        0.65 if 7 < t.hour <= 10 else
-        0.55
-    ))
-
-    st.success(f"⭐ Best Window → {best.strftime('%H:%M')} (~70%)")
-
-else:
-    st.warning("No time windows available")
 
 
     # ============================================
